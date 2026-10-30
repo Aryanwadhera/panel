@@ -1,4 +1,5 @@
 import { complete } from '../lib/openrouter.js';
+import { tzParts } from '../lib/time.js';
 
 const STYLES = {
   brief: 'Write exactly two short sentences.',
@@ -20,10 +21,23 @@ export function buildPrompt(config, ctx, context) {
   return { system, user };
 }
 
+/**
+ * Rewrites run on a fixed timetable: `every` minutes, counted from the `at` time
+ * of day. "Every 12 hours at 7:00" means 7 AM and 7 PM, even after a restart.
+ */
+export function briefDue(config, lastRun, now, tz) {
+  const every = Math.max(15, +config.every || 60);
+  const [h, m] = String(config.at || '07:00').split(':').map(Number);
+  const t = tzParts(new Date(now), tz);
+  const sinceAnchor = ((t.h * 60 + t.mi - (h * 60 + m)) % 1440 + 1440) % 1440;
+  const lastSlot = now - (sinceAnchor % every) * 60e3 - t.s * 1000;
+  return lastRun < lastSlot;
+}
+
 export default {
   type: 'summary',
-  name: 'Daily brief',
-  description: 'An AI summary of your day, written from your other widgets. Uses your OpenRouter key.',
+  name: 'AI brief',
+  description: 'A few sentences about your day, written from your other widgets, on the schedule you pick.',
   size: { w: 2, h: 1 },
   startDelay: 20,
   defaultTitle: 'Today',
@@ -37,12 +51,15 @@ export default {
       key: 'instructions', label: 'Anything to keep in mind?', type: 'textarea',
       placeholder: 'e.g. I walk to work, so flag rain before 8:30. Remind me to stretch if I have back-to-back meetings.',
     },
-    { key: 'every', label: 'Rewrite every', type: 'select', default: '60', options: [
-      { value: '30', label: '30 minutes' }, { value: '60', label: 'Hour' },
-      { value: '120', label: '2 hours' }, { value: '240', label: '4 hours' },
-    ], help: 'Each rewrite is one short request to your chosen model.' },
+    { key: 'every', label: 'Update', type: 'select', default: '60', half: true, options: [
+      { value: '30', label: 'Every 30 minutes' }, { value: '60', label: 'Hourly' },
+      { value: '120', label: 'Every 2 hours' }, { value: '240', label: 'Every 4 hours' },
+      { value: '720', label: 'Every 12 hours' }, { value: '1440', label: 'Daily' },
+    ], help: 'Each update is one short request to your chosen model.' },
+    { key: 'at', label: 'At', type: 'time', default: '07:00', half: true, showIf: { key: 'every', in: ['720', '1440'] } },
   ],
   interval: (c) => Math.max(15, +c.every || 60) * 60,
+  due: briefDue,
 
   async fetch(config, ctx) {
     const { apiKey, model } = ctx.settings.ai || {};

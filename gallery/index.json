@@ -1,0 +1,14 @@
+[
+  { "id": "uv-index", "name": "UV index", "type": "api", "group": "Outdoors", "description": "How strong the sun is where the panel is.", "title": "UV index",
+    "config": { "url": "https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=uv_index", "view": "stat", "valuePath": "current.uv_index", "caption": "right now", "every": "60" } },
+  { "id": "wind", "name": "Wind speed", "type": "api", "group": "Outdoors", "description": "Current wind at the panel’s location.", "title": "Wind",
+    "config": { "url": "https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=wind_speed_10m", "view": "stat", "valuePath": "current.wind_speed_10m", "suffix": " km/h", "every": "15" } },
+  { "id": "bitcoin-fees", "name": "Bitcoin fees", "type": "api", "group": "Money", "description": "The fee for fast confirmation, from mempool.space.", "title": "Bitcoin fees",
+    "config": { "url": "https://mempool.space/api/v1/fees/recommended", "view": "stat", "valuePath": "fastestFee", "suffix": " sat/vB", "every": "15" } },
+  { "id": "people-in-space", "name": "People in space", "type": "api", "group": "Fun", "description": "How many humans are off the planet right now.", "title": "In space",
+    "config": { "url": "http://api.open-notify.org/astros.json", "view": "stat", "valuePath": "number", "caption": "people in orbit", "every": "360" } },
+  { "id": "quote", "name": "Quote of the day", "type": "api", "group": "Fun", "description": "A new line to read every morning.", "title": "Quote", "w": 2,
+    "config": { "url": "https://zenquotes.io/api/today", "view": "text", "textPath": "[0].q", "every": "360" } },
+  { "id": "hacker-news", "name": "Hacker News", "type": "headlines", "group": "News", "description": "The front page, refreshed through the day.", "title": "Hacker News", "w": 1, "h": 2,
+    "config": { "feeds": "https://hnrss.org/frontpage" } }
+]

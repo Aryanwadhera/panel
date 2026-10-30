@@ -22,6 +22,7 @@ function defaults() {
       nightEnd: '07:00',
       grid: { cols: 4, rows: 3 },
       autoUpdate: false,
+      focus: { enabled: true, minutes: 5 },
       audio: { airplay: true, speaker: null },
       ai: { apiKey: '', model: DEFAULT_MODEL },
     },

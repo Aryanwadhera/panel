@@ -18,6 +18,9 @@ import { HttpError, VERSION, fetchJson } from './lib/http.js';
 import { isValidTimeZone, tzParts } from './lib/time.js';
 import { complete, listModels } from './lib/openrouter.js';
 import { mapTile } from './lib/map.js';
+import { createFocus } from './focus.js';
+import { createPhotos } from './photos.js';
+import { loadGallery, resolveRecipe, shareRecipe } from './gallery.js';
 import { createUpdater } from './updater.js';
 import { createAudio } from './audio.js';
 
@@ -42,6 +45,9 @@ const audio = createAudio({
   },
 });
 scheduler.liveData = () => audio.nowPlaying();
+const photos = createPhotos(DATA_DIR);
+const focus = createFocus({ store, onChange: (f) => hub.send('focus', f) });
+const LIVE = { nowplaying: () => audio.nowPlaying(), photos: () => ({ photos: photos.list() }) };
 const updater = createUpdater({
   root: ROOT,
   onChange: (u) => hub.send('update', u),
@@ -83,6 +89,7 @@ function publicSettings() {
     theme: s.theme, nightStart: s.nightStart, nightEnd: s.nightEnd, grid: s.grid,
     location: s.location ? { name: s.location.name } : null,
     aiReady: !!s.ai.apiKey,
+    focus: s.focus,
   };
 }
 
@@ -94,7 +101,7 @@ function publicWidget(w) {
     id: w.id, type: w.type, view: viewOf(w),
     title: w.title, w: w.w, h: w.h,
     props: def?.display?.(w.config || {}) ?? {},
-    data: def?.live ? audio.nowPlaying() : st.data ?? null,
+    data: def?.live ? LIVE[w.type]() : st.data ?? null,
     updatedAt: st.updatedAt ?? null,
     error: st.error ?? null,
   };
@@ -126,6 +133,7 @@ async function snapshot() {
     setupComplete: store.config.setupComplete,
     settings: publicSettings(),
     widgets: store.config.widgets.filter((w) => !w.draft).map(publicWidget),
+    focus: focus.current,
     system: sys,
     pairing: p ? {
       code: p.code,
@@ -140,6 +148,8 @@ async function broadcastState() {
 }
 
 // ---------------------------------------------------------------- http utils
+
+const MAX_PHOTO_BYTES = 20 * 1024 * 1024;
 
 const SECURITY_HEADERS = {
   'X-Content-Type-Options': 'nosniff',
@@ -295,6 +305,10 @@ route('POST', '/hook/:id', async (req, res, { id }, url) => {
   const data = def.ingest(body, store.state[id]?.data, w.config || {});
   store.setData(id, { data, updatedAt: new Date().toISOString(), error: null });
   hub.send('widget', publicWidget(w));
+  if (body?.focus) {
+    const f = typeof body.focus === 'object' ? body.focus : { title: body.focus };
+    focus.alert({ title: f.title || w.title, text: f.text, seconds: Math.min(600, Math.max(5, +f.seconds || 30)) });
+  }
   return { ok: true };
 }, { open: true });
 
@@ -326,6 +340,7 @@ route('GET', '/api/admin/bootstrap', (req) => {
     sessions: store.config.sessions.map((x) => ({ id: x.id, name: x.name, createdAt: x.createdAt, lastSeen: x.lastSeen, current: x === me })),
     system: { ...system(), displaySize, dataDir: DATA_DIR, managed: !!process.env.INVOCATION_ID, local: isLocal(req) },
     update: updater.state,
+    focus: focus.current,
   };
 });
 
@@ -343,6 +358,11 @@ route('PUT', '/api/settings', async (req) => {
   if (b.units !== undefined) { refetch ||= s.units !== b.units; s.units = b.units === 'imperial' ? 'imperial' : 'metric'; }
   if (b.clock24 !== undefined) s.clock24 = !!b.clock24;
   if (b.autoUpdate !== undefined) s.autoUpdate = !!b.autoUpdate;
+  if (b.focus) {
+    if (b.focus.enabled !== undefined) s.focus.enabled = !!b.focus.enabled;
+    if (b.focus.minutes !== undefined) s.focus.minutes = Math.min(60, Math.max(1, +b.focus.minutes || 5));
+    focus.tick();
+  }
   if (b.theme !== undefined && ['light', 'dark', 'auto'].includes(b.theme)) s.theme = b.theme;
   for (const k of ['nightStart', 'nightEnd']) if (/^\d{2}:\d{2}$/.test(b[k] || '')) s[k] = b[k];
   if (b.location !== undefined) {
@@ -504,6 +524,58 @@ route('GET', '/api/map/:x/:y', async (req, res, { x, y }) => {
   res.end(png);
 });
 
+// Photo frame
+
+route('POST', '/api/photos', async (req) => {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > MAX_PHOTO_BYTES) throw new HttpError(413, 'That photo is too big');
+    chunks.push(chunk);
+  }
+  let name;
+  try { name = photos.add(Buffer.concat(chunks)); } catch (err) { throw new HttpError(400, err.message); }
+  broadcastState();
+  return { name };
+});
+
+route('GET', '/api/photos/:name', (req, res, { name }) => {
+  const photo = photos.read(name);
+  if (!photo) return send(res, 404, 'No such photo');
+  res.writeHead(200, { ...SECURITY_HEADERS, 'Content-Type': photo.type, 'Cache-Control': 'private, max-age=31536000, immutable' });
+  res.end(photo.body);
+});
+
+route('DELETE', '/api/photos/:name', (req, res, { name }) => {
+  photos.remove(name);
+  broadcastState();
+  return { ok: true };
+});
+
+// Focus mode
+
+route('POST', '/api/focus/dismiss', () => {
+  focus.dismiss();
+  return { ok: true };
+});
+
+route('POST', '/api/focus/test', () => {
+  focus.alert({ title: 'This is focus mode', text: 'Dismiss it from your phone, or it clears by itself.', seconds: 15 });
+  return { ok: true };
+});
+
+// Widget gallery
+
+route('GET', '/api/gallery', () => loadGallery());
+
+route('POST', '/api/gallery/resolve', async (req) => {
+  const { source } = await readBody(req, 100_000);
+  return resolveRecipe(source).catch((err) => { throw new HttpError(400, err.message); });
+});
+
+route('GET', '/api/widgets/:id/share', (req, res, { id }) => shareRecipe(findWidget(id)));
+
 route('GET', '/api/ai/models', () => listModels());
 
 route('POST', '/api/ai/test', async (req) => {
@@ -580,6 +652,19 @@ route('POST', '/api/system/update', async () => {
   }
 });
 
+route('POST', '/api/system/reset', async (req) => {
+  const { confirm } = await readBody(req);
+  if (confirm !== 'reset') throw new HttpError(400, 'Type reset to confirm');
+  store.reset();
+  photos.clear();
+  store.flush();
+  auth.request();
+  hub.send('reload');
+  // Under systemd, start clean so sound and AirPlay pick up the defaults too.
+  if (process.env.INVOCATION_ID) setTimeout(() => process.exit(0), 300);
+  return { ok: true };
+});
+
 route('POST', '/api/system/restart', () => {
   if (!process.env.INVOCATION_ID) throw new HttpError(400, 'Panel isn’t running as a service, so it can’t restart itself.');
   setTimeout(() => process.exit(0), 300);
@@ -634,6 +719,7 @@ server.listen(PORT, HOST, () => {
   console.log(`  Data     ${DATA_DIR}`);
   scheduler.start();
   updater.start();
+  setInterval(() => focus.tick(), 5000).unref();
   // Forget drafts nobody finished setting up.
   setInterval(() => {
     const stale = store.config.widgets.filter((w) => w.draft && Date.now() - (w.createdAt || 0) > 30 * 60e3);

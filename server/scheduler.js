@@ -53,7 +53,10 @@ export class Scheduler {
       if (def.startDelay && now - this.bootAt < def.startDelay * 1000 && !this.store.state[w.id]?.data) continue;
       const st = this.store.state[w.id] || {};
       const every = st.error ? Math.min(intervalOf(w), RETRY_AFTER_ERROR) : intervalOf(w);
-      if (!st.lastRun || now - st.lastRun >= every * 1000) this.run(w);
+      const due = def.due && !st.error
+        ? def.due(w.config || {}, st.lastRun || 0, now, this.store.settings.timezone)
+        : now - st.lastRun >= every * 1000;
+      if (!st.lastRun || due) this.run(w);
     }
   }
 

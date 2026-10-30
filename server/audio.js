@@ -11,12 +11,14 @@ import { promisify } from 'node:util';
 import fs from 'node:fs';
 import dgram from 'node:dgram';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import { parseSinks, parseBtInfo, parseBtDevices, createPacketReader, chimeWav } from './lib/audio-parse.js';
 
 const execAsync = promisify(execFile);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const MAC = /^[0-9A-F]{2}(:[0-9A-F]{2}){5}$/;
+const ART_LEAD_MS = 3000;
 
 // A system service doesn't get the user's session variables, which pactl
 // needs to find PipeWire. Fill them in when we can.
@@ -399,7 +401,7 @@ alsa = { output_device = "default"; };
 
   const np = {
     state: 'idle', title: '', artist: '', album: '', source: '',
-    art: null, artType: null, artVersion: 0,
+    art: null, artType: null, artId: '', artAt: 0,
     duration: null, position: null, positionAt: null,
   };
   let idleTimer;
@@ -408,7 +410,7 @@ alsa = { output_device = "default"; };
     return {
       state: np.state,
       title: np.title, artist: np.artist, album: np.album, source: np.source,
-      artUrl: np.art ? `/api/audio/art?v=${np.artVersion}` : null,
+      artUrl: np.art ? `/api/audio/art?v=${np.artId}` : null,
       duration: np.duration, position: np.position, positionAt: np.positionAt,
       airplay: { available: caps.airplay, enabled: settings().airplay !== false, name: state.airplay.name || store.settings.name },
     };
@@ -432,7 +434,12 @@ alsa = { output_device = "default"; };
   const onItem = (type, code, data) => {
     const text = data.toString('utf8');
     if (type === 'core') {
-      if (code === 'minm') setNowPlaying({ title: text });
+      if (code === 'minm') {
+        // A new song keeps the old cover until its own arrives, unless that
+        // cover got here first: phones send the two in either order.
+        const newSong = text !== np.title && Date.now() - np.artAt > ART_LEAD_MS;
+        setNowPlaying({ title: text, ...(newSong ? { art: null, artType: null } : {}) });
+      }
       else if (code === 'asar') setNowPlaying({ artist: text });
       else if (code === 'asal') setNowPlaying({ album: text });
       return;
@@ -456,7 +463,9 @@ alsa = { output_device = "default"; };
         break;
       case 'PICT': {
         const type = data[0] === 0xff && data[1] === 0xd8 ? 'image/jpeg' : data[0] === 0x89 && data[1] === 0x50 ? 'image/png' : null;
-        setNowPlaying({ art: data.length && type ? data : null, artType: type, artVersion: np.artVersion + 1 });
+        // Named by content, so a browser cache can't serve an older song's cover.
+        const artId = crypto.createHash('sha1').update(data).digest('hex').slice(0, 12);
+        setNowPlaying({ art: data.length && type ? data : null, artType: type, artId, artAt: Date.now() });
         break;
       }
       case 'prgr': {

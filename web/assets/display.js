@@ -116,16 +116,14 @@ const R = {
     const tomorrow = dayKey(new Date(now.getTime() + 86400e3));
     const groups = new Map();
     let todayCount = 0;
-    let mapEvent = null;
+    const place = w.props.showMap ? nextPlace(evs, now) : null;
     for (const e of evs) {
       const start = new Date(e.start), end = new Date(e.end);
       let key = dayKey(start);
       if (e.allDay && start < now && end > now) key = today; // multi-day all-day spanning today
       if (key < today) continue;
-      if (key === today && !e.allDay && end <= now && evs.length > 6) continue; // hide finished events when busy
+      if (key === today && !e.allDay && end <= now && (evs.length > 6 || place)) continue; // hide finished events when busy, and keep the map in view
       if (key === today) todayCount++;
-      // The next place to be today; a timed event beats an all-day one.
-      if (key === today && e.map && (e.allDay || end > now) && (!mapEvent || (mapEvent.allDay && !e.allDay))) mapEvent = e;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(e);
     }
@@ -140,14 +138,10 @@ const R = {
         const state = !e.allDay && end <= now ? ' past' : !e.allDay && start <= now ? ' now' : '';
         const cal = e.cal ? ` cal${Math.min(3, e.cal)}` : '';
         html += `<li class="ev${state}${cal}"><span class="t">${e.allDay ? 'All day' : esc(timeStr(start))}</span><span class="x"><b>${esc(e.title)}</b>${w.props.showLocation && e.location ? `<i>${esc(e.location.split('\n')[0])}</i>` : ''}</span></li>`;
+        if (e === place) html += `<li class="ev-place">${e.travel ? `<p>${esc(travelLine(e, now))}</p>` : ''}${eventMap(e)}</li>`;
       }
     }
-    return {
-      meta: todayCount ? `${todayCount} today` : '',
-      body: `<ol class="agenda">${html}</ol>`,
-      fade: true,
-      after: w.props.showMap && mapEvent ? eventMap(mapEvent) : '',
-    };
+    return { meta: todayCount ? `${todayCount} today` : '', body: `<ol class="agenda">${html}</ol>`, fade: true };
   },
 
   tasks(w) {
@@ -285,6 +279,12 @@ const R = {
     };
   },
 
+  photos(w) {
+    const list = w.data?.photos || [];
+    if (!list.length) return { bare: true, body: '<div class="empty"><b>No photos yet</b>Add some from your phone.</div>' };
+    return { bare: true, body: frameHtml(list, w.props) };
+  },
+
   countdown(w) {
     const { label, date } = w.props;
     if (!date) return empty('No date set');
@@ -296,25 +296,40 @@ const R = {
   },
 };
 
-/** A map centred on the event, built from a strip of tiles around it. */
-function eventMap(e) {
+/** Today's next event with a known place. A timed event beats an all-day one. */
+function nextPlace(evs, now) {
+  const today = dayKey(now);
+  const left = evs.filter((e) => {
+    const start = new Date(e.start), end = new Date(e.end);
+    const isToday = dayKey(start) === today || (e.allDay && start < now && end > now);
+    return e.map && isToday && (e.allDay || end > now);
+  });
+  return left.find((e) => !e.allDay) || left[0] || null;
+}
+
+function travelLine(e, now) {
+  const leaveBy = new Date(e.travel.leaveBy);
+  const m = e.travel.minutes;
+  const drive = m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min drive` : `${m} min drive`;
+  return `${drive} · ${leaveBy <= now ? 'leave now' : `leave by ${timeStr(leaveBy)}`}`;
+}
+
+/** A map centred on the event, built from the tiles around it. */
+function eventMap(e, size = 18) {
   const zoom = 16;
   const tiles = 2 ** zoom;
-  const size = 24; // vh per tile
   const lat = (e.map.lat * Math.PI) / 180;
   const x = ((e.map.lon + 180) / 360) * tiles;
   const y = ((1 - Math.log(Math.tan(lat) + 1 / Math.cos(lat)) / Math.PI) / 2) * tiles;
   let html = '';
-  for (let dy = -1; dy <= 1; dy++) {
+  for (let dy = -2; dy <= 2; dy++) {
     for (let dx = -3; dx <= 3; dx++) {
       const tx = Math.floor(x) + dx, ty = Math.floor(y) + dy;
       if (tx < 0 || ty < 0 || tx >= tiles || ty >= tiles) continue;
       html += `<img src="/api/map/${tx}/${ty}" alt="" loading="lazy" style="left:calc(50% + ${((tx - x) * size).toFixed(2)}vh);top:calc(50% + ${((ty - y) * size).toFixed(2)}vh);width:${size}vh;height:${size}vh">`;
     }
   }
-  const when = e.allDay ? 'Today' : timeStr(new Date(e.start));
-  return `<figure class="map"><div class="map-tiles">${html}</div><span class="map-pin"></span>
-    <figcaption>${esc(when)} · ${esc(e.title)}</figcaption><small>© OpenStreetMap</small></figure>`;
+  return `<div class="map"><div class="map-tiles">${html}</div><span class="map-pin"></span><small>© OpenStreetMap</small></div>`;
 }
 
 function waiting(w, title = 'Waiting for data') {
@@ -342,7 +357,7 @@ function cardHtml(w) {
   try { r = (R[w.view] || R[w.type] || (() => empty('Unknown widget')))(w); } catch (err) { console.error(err); r = empty('Couldn’t draw this widget'); }
   const stale = w.error && w.data && !['summary'].includes(w.type) ? `<div class="note">Couldn’t refresh: ${esc(w.error)}</div>` : '';
   const head = r.bare ? '' : `<header class="card-h"><span class="title">${esc(w.title)}</span><span class="meta">${r.meta || ''}</span></header>`;
-  return { html: `${head}<div class="card-b${r.fade ? ' fade-able' : ''}">${r.body}</div>${r.after || ''}${stale}`, fit: r.fit };
+  return { html: `${head}<div class="card-b${r.fade ? ' fade-able' : ''}">${r.body}</div>${stale}`, fit: r.fit };
 }
 
 function fitText(el) {
@@ -441,6 +456,72 @@ function renderOverlay() {
   </div>`;
 }
 
+// ---------------------------------------------------------------- photo frame
+
+const frameHtml = (list, props) => `<div class="frame${props.fit ? ' fit' : ''}" data-photos="${esc(JSON.stringify(list))}" data-every="${props.every}"></div>`;
+
+const inHours = (from, until) => {
+  const now = fmt(new Date(), { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  return from > until ? now >= from || now < until : now >= from && now < until;
+};
+
+/** Everyone's photo changes on the same beat, worked out from the clock. */
+function syncFrames() {
+  for (const el of document.querySelectorAll('[data-photos]')) {
+    const list = JSON.parse(el.dataset.photos);
+    const name = list[Math.floor(Date.now() / 1000 / +el.dataset.every) % list.length];
+    if (el.dataset.showing === name) continue;
+    el.dataset.showing = name;
+    const img = new Image();
+    img.alt = '';
+    img.onload = () => {
+      el.append(img);
+      requestAnimationFrame(() => img.classList.add('in'));
+      setTimeout(() => { while (el.children.length > 1) el.firstChild.remove(); }, 1400);
+    };
+    img.src = `/api/photos/${encodeURIComponent(name)}`;
+  }
+}
+
+function renderFrame() {
+  const el = $('#frame');
+  const w = PREVIEW ? null : S.widgets.find((x) => x.type === 'photos' && x.props.full && x.data?.photos?.length && inHours(x.props.full.from, x.props.full.until));
+  el.hidden = !w;
+  if (!w) { if (el.innerHTML) el.innerHTML = ''; return; }
+  const html = frameHtml(w.data.photos, w.props);
+  if (el.dataset.html !== html) { el.dataset.html = html; el.innerHTML = html; }
+}
+
+// ---------------------------------------------------------------- focus mode
+
+function focusCountdown(f) {
+  const mins = Math.ceil((Date.parse(f.at) - Date.now()) / 60e3);
+  if (mins <= 0) return 'Starting now';
+  return `Starts in ${mins} min`;
+}
+
+function renderFocus() {
+  const el = $('#focus');
+  const f = S.focus;
+  el.hidden = !f;
+  if (!f) { el.dataset.key = ''; el.innerHTML = ''; return; }
+  if (el.dataset.key === f.key) return;
+  el.dataset.key = f.key;
+  const at = f.at ? timeStr(new Date(f.at)) : '';
+  const label = f.kind === 'leave' ? 'Time to leave' : f.kind === 'event' ? focusCountdown(f) : 'Needs attention';
+  const detail = f.kind === 'alert' ? f.text : [f.kind === 'leave' ? `Starts at ${at}` : at, f.location].filter(Boolean).join(' · ');
+  const drive = f.travel ? `${f.travel.minutes} min drive` : '';
+  el.innerHTML = `<div class="focus${f.map ? ' has-map' : ''} ${esc(f.kind)}">
+    <div class="focus-text">
+      <div class="focus-label"${f.kind === 'event' ? ` data-focus-at="${esc(f.at)}"` : ''}>${esc(label)}</div>
+      <h1>${esc(f.title)}</h1>
+      ${detail ? `<p>${esc(detail)}</p>` : ''}
+      ${drive ? `<p>${esc(drive)}</p>` : ''}
+    </div>
+    ${f.map ? eventMap(f, 34) : ''}
+  </div>`;
+}
+
 function applyTheme() {
   const { theme, nightStart, nightEnd } = S.settings;
   let dark = theme === 'dark';
@@ -464,6 +545,9 @@ function render() {
     if ($('.welcome', root)) root.innerHTML = '';
     renderGrid();
   }
+  renderFrame();
+  renderFocus();
+  syncFrames();
   renderOverlay();
 }
 
@@ -489,6 +573,7 @@ function connect() {
     if (i >= 0) S.widgets[i] = w;
     render();
   });
+  es.addEventListener('focus', (e) => { if (S) { S.focus = JSON.parse(e.data); renderFocus(); } });
   es.addEventListener('reload', () => location.reload());
   es.addEventListener('error', () => {
     clearTimeout(downTimer);
@@ -527,6 +612,8 @@ setInterval(() => {
   for (const el of document.querySelectorAll('[data-np-pos]')) {
     if (el.dataset.npPlaying === '1') el.innerHTML = progressInner(+el.dataset.npPos, +el.dataset.npAt, +el.dataset.npDur, true);
   }
+  for (const el of document.querySelectorAll('[data-focus-at]')) el.textContent = focusCountdown({ at: el.dataset.focusAt });
+  syncFrames();
   if (S.pairing?.expires) renderOverlay();
 }, 1000);
 setInterval(() => { for (const el of document.querySelectorAll('.card')) el._html = null; render(); }, 60e3);

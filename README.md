@@ -31,7 +31,7 @@ Set it up and manage it from your phone.
 - [Webhooks: send your own data](#webhooks-send-your-own-data)
 - [APIs: pull your own data](#apis-pull-your-own-data)
 - [Sound and AirPlay](#sound-and-airplay)
-- [The daily brief](#the-daily-brief)
+- [The AI brief](#the-ai-brief)
 - [Updates](#updates)
 - [Security and privacy](#security-and-privacy)
 - [The `panel` command](#the-panel-command)
@@ -54,7 +54,10 @@ Most dashboards are built for a desk. Panel is built for a wall, a kitchen count
 - **Prebuilt widgets** for the things people actually glance at: clock, weather, calendar, tasks, headlines, uptime, countdowns and notes.
 - **Your own data, pushed or pulled.** Every webhook widget gets its own address: send it a number, list, event, message or progress value and the screen updates instantly. Or point an API widget at any service, pick a template or tap the values you want, and Panel keeps it fresh.
 - **A speaker for your music.** Connect a Bluetooth, USB or headphone-jack speaker, then AirPlay from your iPhone or Mac. The screen shows what's playing with album art.
-- **A daily brief.** Panel reads everything on the screen and asks your choice of AI model (via [OpenRouter](https://openrouter.ai)) for a few calm sentences about your day.
+- **An AI brief, on your schedule.** Panel reads everything on the screen and asks your choice of AI model (via [OpenRouter](https://openrouter.ai)) for a few calm sentences about your day: every 30 minutes, hourly, every 12 hours or once a day.
+- **Focus mode.** When something needs you, it fills the screen: a meeting about to start, the time to leave, a site going down, or a webhook that asks for attention.
+- **A photo frame.** Add pictures from your phone. They stay on the Pi, and can take over the whole screen at night.
+- **A widget gallery.** Add ready-made widgets, or install one a friend shared from a link.
 - **Updates from the dashboard.** When a new version is pushed, the manage page shows what changed and installs it in one tap, with automatic rollback if anything goes wrong.
 - **One design language.** White cards, big type, generous space. Light, dark, or dark at night.
 
@@ -69,7 +72,7 @@ Most dashboards are built for a desk. Panel is built for a wall, a kitchen count
 | **Screen** | Any HDMI monitor or TV. Panel scales to the resolution, from 720p to 4K. |
 | **Network** | The Pi and your phone on the same Wi‑Fi. |
 | **Speaker** | Optional. Any Bluetooth speaker, a USB or USB‑C speaker or sound card, powered speakers on the Pi's headphone jack (Pi 3 and 4), or the monitor's own speakers over HDMI. |
-| **Optional** | An [OpenRouter API key](https://openrouter.ai/keys) for the daily brief. |
+| **Optional** | An [OpenRouter API key](https://openrouter.ai/keys) for the AI brief. |
 
 Panel also runs on any Linux machine or Mac with Node 18+ (see [Development](#development)).
 
@@ -122,7 +125,7 @@ After the reboot, the screen shows a QR code and a 6-digit code.
 2. **Name it** and confirm the time zone, clock style and units.
 3. **Choose a city** for the weather. You can skip this.
 4. **Pick a few widgets.** Paste a calendar link if you want your agenda ([how to get one](#getting-a-calendar-link)).
-5. **Connect the daily brief** with an OpenRouter key and press **Test key**. You can skip this too.
+5. **Connect the AI brief** with an OpenRouter key and press **Test key**. You can skip this too.
 
 The screen switches to your dashboard the moment you finish.
 
@@ -132,12 +135,31 @@ Open **http://panel.local** on any paired phone or laptop.
 
 <p align="center"><img src="docs/manage.png" alt="Editing a webhook widget: title, size, display style and webhook URL" width="720"></p>
 
-| Tab | What's there |
+| Section | What's there |
 |---|---|
-| **Widgets** | A live preview of the screen, your widgets in order (use the arrows to rearrange), and **Add widget**. Tap a widget to change its title, size, settings and webhook. |
+| **Screen** | A live preview, your widgets in order (use the arrows to rearrange), and what's taking over the screen right now. Tap a widget to change it. |
+| **Gallery** | Every widget, ready-made setups, search, and **Install from a link**. |
 | **Sound** | Which speaker to use, volume, Bluetooth pairing, and AirPlay. See [Sound and AirPlay](#sound-and-airplay). |
-| **Settings** | Name, time zone, units and location; grid size (up to 6 × 4); light, dark or dark at night; the daily brief's key and model; software updates. |
-| **Devices** | Every phone and laptop you've paired, with a button to disconnect each. |
+| **Settings** | Name, time zone and location; appearance and grid size; focus mode; your AI key and model; paired phones and laptops; software updates; and reset. |
+
+**Reset.** Settings → Reset erases every widget, photo and setting, your AI key and all paired phones, then returns to first-time setup. You type `reset` to confirm. `panel reset` on the Pi does the same.
+
+### Focus mode
+
+Focus mode fills the screen for a moment, then gets out of the way. It's on by default. It shows:
+
+- Calendar events, a few minutes before they start (2 to 15, your choice).
+- **Time to leave**, when an event has an address and a starting point.
+- A site in an Uptime widget going down, for one minute per outage.
+- Any webhook that includes `focus`: `{"value": 5, "focus": {"title": "Deploy failed", "text": "main is red", "seconds": 30}}`. A plain string works too, and `seconds` can be 5 to 600.
+
+The Screen section shows what's up and has a **Dismiss** button, since the panel has no touchscreen.
+
+### Sharing widgets
+
+Open a widget and tap **Copy widget** to get its setup as text. Send that to a friend, or save it as a `.json` file somewhere public and share the https link. They paste either one into Gallery → **Install from a link**.
+
+A shared widget contains settings only, never code, and API keys, tokens and private calendar links are left out. Anyone installing one sees what it does and which site it talks to before adding it. To add one for everyone, send a pull request to [`gallery/index.json`](gallery/index.json).
 
 **The grid.** The screen is a grid, 4 × 3 by default. Each widget takes a number of cells (1×1, 2×1, 2×2 and so on). Widgets fill left to right, top to bottom, and smaller widgets slot into gaps automatically. The capacity bar under the list warns you when things won't fit.
 
@@ -147,14 +169,15 @@ Open **http://panel.local** on any paired phone or laptop.
 
 | Widget | Shows | Needs |
 |---|---|---|
-| **Daily brief** | 2–4 sentences about your day, written from your other widgets | OpenRouter key |
+| **AI brief** | 2–4 sentences about your day, written from your other widgets, updated every 30 minutes up to once a day | OpenRouter key |
 | **Clock** | Time and date, plus extra time zones when there's room | |
 | **Weather** | Now, today's high and low, rain chance, and a forecast when there's room | A city (via [Open-Meteo](https://open-meteo.com), no key) |
-| **Calendar** | Today and the next few days, with the current event marked. Handles repeating events, exceptions and time zones. If an event still to come today has an address, a map of it appears at 2 rows or taller | A private iCal (`.ics`) link |
+| **Calendar** | Today and the next few days, with the current event marked. Handles repeating events, exceptions and time zones. Today's next event with an address gets a map and drive time beneath it, at 2 rows or taller | A private iCal (`.ics`) link |
+| **Photo frame** | A slideshow of pictures from your phone. Can fill the whole screen at set times | Photos (they stay on the Pi) |
 | **Tasks** | A to-do list you edit from your phone or by webhook | |
 | **Now playing** | The song playing over AirPlay: album art, artist, progress | AirPlay on (it is by default) |
-| **Webhook** | A number, list, event feed, message or progress bar | Whatever you send it |
-| **API** | The same five styles, pulled from any API on a schedule, with templates for GitHub, Stripe, crypto prices, Home Assistant and more | A URL, or a template |
+| **Push data** | A number, list, event feed, message or progress bar | Whatever you send it |
+| **Pull data** | The same five styles, pulled from any API on a schedule, with templates for GitHub, Stripe, crypto prices, Home Assistant and more | A URL, or a template |
 | **Headlines** | Latest stories from RSS or Atom feeds | Feed URLs |
 | **Uptime** | Up/down and response time for your sites, checked every minute | URLs |
 | **Countdown** | Days until (or since) a date | |
@@ -174,7 +197,7 @@ Add several calendars to one widget, one link per line. Calendars refresh every 
 
 ## Webhooks: send your own data
 
-Add a **Webhook** widget, choose how it should look, and copy its URL from the editor. Anything that can make an HTTP request can now update your screen.
+Add a **Push data** widget, choose how it should look, and copy its URL from the editor. Anything that can make an HTTP request can now update your screen.
 
 ```bash
 curl -X POST 'http://panel.local/hook/AbC123?token=…' \
@@ -259,7 +282,7 @@ Use an **Event feed** widget. This needs Panel reachable from the internet; see 
 <details>
 <summary><b>Pulling instead of pushing</b></summary>
 
-If a service has an API but no webhooks, use an **API** widget instead. See [APIs: pull your own data](#apis-pull-your-own-data).
+If a service has an API but no webhooks, use a **Pull data** widget instead. See [APIs: pull your own data](#apis-pull-your-own-data).
 </details>
 
 ### Receiving webhooks from the internet
@@ -273,11 +296,11 @@ Panel never treats tunnelled or proxied requests as local, so even if the whole 
 
 ## APIs: pull your own data
 
-Webhooks need the other service to send data to Panel. An **API** widget works the other way round: Panel calls the service itself, every minute to every six hours, and shows what comes back. Nothing needs to reach your home network, so it works with any service on the internet.
+Webhooks need the other service to send data to Panel. A **Pull data** widget works the other way round: Panel calls the service itself, every minute to every six hours, and shows what comes back. Nothing needs to reach your home network, so it works with any service on the internet.
 
 ### Start from a template
 
-Add an **API** widget and pick a template. Fill in a blank or two and it's ready:
+Add a **Pull data** widget and pick a template. Fill in a blank or two and it's ready:
 
 | Template | Shows | You provide |
 |---|---|---|
@@ -352,7 +375,7 @@ Volume follows your phone. Sound comes out of whichever speaker is selected in t
 The installer uses the [shairport-sync](https://github.com/mikebrady/shairport-sync) package from Raspberry Pi OS. Depending on the OS version, that build may support only classic AirPlay. Classic AirPlay works from Control Center, Music and apps like Spotify. Grouping the panel with HomePods in the Home app, or playing to several rooms at once, needs AirPlay 2. For that, build shairport-sync with AirPlay 2 support and install its `nqptp` companion, following [their guide](https://github.com/mikebrady/shairport-sync/blob/master/BUILD.md). Panel detects the AirPlay 2 build and uses it automatically.
 </details>
 
-## The daily brief
+## The AI brief
 
 The brief is a card that reads like a note from a thoughtful assistant:
 
@@ -395,7 +418,7 @@ To run a beta channel, push to another branch and install test devices with `PAN
 
 - **Local first.** Panel runs entirely on your Pi. Settings, widget data and paired devices are stored in `~/.panel`, readable only by your user.
 - **AirPlay** lets anyone on your Wi‑Fi play music to the panel, like any AirPlay speaker. Turn it off in the Sound tab if that's not what you want.
-- **What leaves the device:** requests to the services you configure (your calendar, feeds, APIs, sites to check); [Open-Meteo](https://open-meteo.com) for weather and city search; [OpenStreetMap](https://www.openstreetmap.org) for calendar maps, which receives the addresses of today's events (turn off **Show a map** on the widget to stop this); OpenRouter, only if you set up the brief; GitHub, to check for updates. No analytics or telemetry.
+- **What leaves the device:** requests to the services you configure (your calendar, feeds, APIs, sites to check); [Open-Meteo](https://open-meteo.com) for weather and city search; [OpenStreetMap](https://www.openstreetmap.org) and [OSRM](https://project-osrm.org) for calendar maps and drive times, which receive the addresses of today's events and your starting address (turn off the map on the Calendar widget to stop this); GitHub, for the Gallery list; OpenRouter, only if you set up the brief; GitHub, to check for updates. No analytics or telemetry.
 - **Pairing.** Managing the panel requires a code that only appears on its screen, so you have to be able to see it. Codes expire after 5 minutes, and five wrong guesses replace the code with a new one. Paired browsers get a long-lived, HttpOnly cookie, and you can disconnect any of them from **Devices**.
 - **Trusted locally.** Requests from the Pi itself (the kiosk and the `panel` command) don't need pairing. Requests forwarded by a proxy or tunnel are never treated as local.
 - **Secrets stay put.** API keys, calendar links and custom headers are masked in every API response, including to paired devices.

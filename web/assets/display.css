@@ -106,14 +106,16 @@ body.display.preview { cursor: default; }
 .ev.cal2 .x b::before { background: #b9855b; }
 .ev.cal3 .x b::before { background: #7aa37a; }
 
-.map { flex: 0 0 42%; min-height: 0; margin-top: 1.6vh; position: relative; overflow: hidden; border-radius: 1.2vh; background: var(--line); box-shadow: 0 0 0 1px var(--line); }
-.card[data-h="1"] .map { display: none; }
-.map-tiles { position: absolute; inset: 0; filter: grayscale(1) contrast(1.04); }
-[data-theme="dark"] .map-tiles { filter: grayscale(1) invert(1) brightness(.85) contrast(1.1); }
+.ev-place { padding: .2vh 0 1.2vh calc(8.5ch + 1.6vh); }
+.ev-place p { font-size: .8em; color: var(--ink-2); margin-bottom: .9vh; }
+.card[data-h="1"] .ev-place { display: none; }
+
+.map { position: relative; overflow: hidden; height: 15vh; border-radius: 1vh; background: var(--fill); }
+.map-tiles { position: absolute; inset: 0; filter: grayscale(1) contrast(.92) brightness(1.04); }
+[data-theme="dark"] .map-tiles { filter: grayscale(1) invert(1) brightness(.8); }
 .map-tiles img { position: absolute; max-width: none; display: block; }
-.map-pin { position: absolute; left: 50%; top: 50%; width: 1.7vh; height: 1.7vh; margin: -.85vh; border-radius: 50%; background: var(--ink); box-shadow: 0 0 0 .4vh var(--surface); }
-.map figcaption { position: absolute; left: 1vh; bottom: 1vh; max-width: calc(100% - 14vh); padding: .5vh 1vh; border-radius: .7vh; background: var(--surface); font-size: 1.55vh; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.map small { position: absolute; right: .6vh; bottom: .4vh; padding: 0 .4vh; font-size: 1.1vh; color: var(--ink-2); background: var(--surface); border-radius: .3vh; }
+.map-pin { position: absolute; left: 50%; top: 50%; width: 1.3vh; height: 1.3vh; margin: -.65vh; border-radius: 50%; background: var(--ink); }
+.map small { position: absolute; right: .7vh; bottom: .4vh; font-size: 1vh; color: var(--ink-3); }
 
 /* ---------- Tasks */
 .tasks { list-style: none; display: flex; flex-direction: column; gap: 1.5vh; font-size: 2.15vh; line-height: 1.3; }
@@ -255,3 +257,28 @@ body.display.preview { cursor: default; }
 @keyframes pulse { 50% { opacity: .3; } }
 
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* ---------- Photo frame */
+.card[data-type="photos"] { padding: 0; }
+.card[data-type="photos"] .empty { margin: auto 2.9vh; }
+.frame { position: absolute; inset: 0; overflow: hidden; background: var(--fill); }
+.frame img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 1.2s ease; }
+.frame img.in { opacity: 1; }
+.frame.fit { background: #0b0b0b; }
+.frame.fit img { object-fit: contain; }
+#frame { position: fixed; inset: 0; z-index: 20; background: #0b0b0b; }
+
+/* ---------- Focus mode */
+#focus { position: fixed; inset: 0; z-index: 30; }
+.focus { position: absolute; inset: 0; display: grid; background: var(--surface); animation: appear .4s ease both; }
+.focus.has-map { grid-template-columns: 1fr 1fr; }
+.focus-text { align-self: center; padding: 0 9vh; min-width: 0; }
+.focus-label { font-size: 3vh; font-weight: 500; color: var(--ink-2); margin-bottom: 2.4vh; }
+.focus.alert .focus-label { color: var(--bad); }
+.focus h1 { font-size: 11vh; line-height: 1.04; letter-spacing: -.035em; font-weight: 600; overflow-wrap: anywhere; }
+.focus.has-map h1 { font-size: 8vh; }
+.focus p { font-size: 3.2vh; line-height: 1.35; color: var(--ink-2); margin-top: 2.2vh; }
+.focus p + p { margin-top: .8vh; }
+.focus .map { height: 100%; border-radius: 0; }
+.focus .map-pin { width: 2.4vh; height: 2.4vh; margin: -1.2vh; }
+.focus .map small { font-size: 1.3vh; }

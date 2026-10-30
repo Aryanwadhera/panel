@@ -2,8 +2,8 @@
 
 :root {
   --bg: #f3f3f1;
-  --surface: #ffffff;
-  --ink: #111111;
+  --surface: oklch(99.6% .001 100);
+  --ink: oklch(19% .004 100);
   --ink-2: #5f5f5b;
   --ink-3: #9c9c97;
   --line: #e7e7e3;

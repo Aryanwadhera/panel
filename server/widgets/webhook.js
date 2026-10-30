@@ -2,8 +2,8 @@ import { viewFields, pathFields, mapView, summarizeView } from '../lib/views.js'
 
 export default {
   type: 'webhook',
-  name: 'Webhook',
-  description: 'Anything that can send an HTTP request: numbers, lists, alerts, progress.',
+  name: 'Push data',
+  description: 'Another app sends numbers, lists or alerts here with a webhook.',
   size: { w: 1, h: 1 },
   fields: [
     ...viewFields,

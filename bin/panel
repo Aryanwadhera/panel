@@ -88,11 +88,12 @@ case "${1:-help}" in
     fi
     ;;
   reset)
-    read -r -p "Erase all widgets, settings and paired devices? [y/N] " ok
+    read -r -p "Erase all widgets, photos, settings and paired devices? [y/N] " ok
     case "$ok" in
       [Yy]*)
         sudo systemctl stop panel
         rm -f "$DATA/config.json" "$DATA/state.json"
+        rm -rf "$DATA/photos"
         sudo systemctl start panel
         echo "Reset. The screen will show setup again."
         ;;

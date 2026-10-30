@@ -115,6 +115,11 @@ const I = {
   airplay: '<path d="M6.5 17H5a2.5 2.5 0 0 1-2.5-2.5v-8A2.5 2.5 0 0 1 5 4h14a2.5 2.5 0 0 1 2.5 2.5v8A2.5 2.5 0 0 1 19 17h-1.5"/><path d="m12 14 5 6.5H7z"/>',
   volume: '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>',
   mute: '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="m16 9.5 5 5M21 9.5l-5 5"/>',
+  photos: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="9.5" r="1.6"/><path d="m4 17 5-4.5 3.5 3 3-2.5 4.5 4"/>',
+  screen: '<rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8.5 20h7M12 16.5V20"/>',
+  gallery: '<rect x="3.5" y="3.5" width="7" height="7" rx="1.8"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.8"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.8"/><path d="M17 14v6M14 17h6"/>',
+  settings: '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
+  share: '<path d="M12 15V4M8 7.5 12 3.5l4 4"/><path d="M6 11.5H5a1.5 1.5 0 0 0-1.5 1.5v6A1.5 1.5 0 0 0 5 20.5h14a1.5 1.5 0 0 0 1.5-1.5v-6a1.5 1.5 0 0 0-1.5-1.5h-1"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   up: '<path d="m6 15 6-6 6 6"/>',
   down: '<path d="m6 9 6 6 6-6"/>',
@@ -376,7 +381,7 @@ function showOnboarding() {
       const options = [
         { key: 'clock', name: 'Clock', desc: 'The time and date.' },
         { key: 'weather', name: 'Weather', desc: ob.location ? `Conditions and forecast for ${ob.location.name}.` : 'Needs a location. Go back to add one.', disabled: !ob.location },
-        { key: 'summary', name: 'Daily brief', desc: 'An AI summary of your day, written from everything else on the panel.' },
+        { key: 'summary', name: 'AI brief', desc: 'An AI summary of your day, written from everything else on the panel.' },
         { key: 'calendar', name: 'Calendar', desc: 'Today’s agenda from Google, Apple or Outlook.' },
         { key: 'tasks', name: 'Tasks', desc: 'A to-do list you can update from your phone or a webhook.' },
         { key: 'headlines', name: 'Headlines', desc: 'Top stories from news sites you choose.' },
@@ -428,7 +433,7 @@ function showOnboarding() {
         }
         status.hidden = false;
       }) }, 'Test key');
-      return frame('Your daily brief', 'Panel reads your calendar, tasks, weather and anything else you connect, then writes a few calm sentences about your day. It runs on OpenRouter, so you choose the model and pay only for what you use. A brief is usually a fraction of a cent.', h('div', { class: 'fields' },
+      return frame('Your AI brief', 'Panel reads your calendar, tasks, weather and anything else you connect, then writes a few calm sentences about your day. It runs on OpenRouter, so you choose the model and pay only for what you use. A brief is usually a fraction of a cent.', h('div', { class: 'fields' },
         field('OpenRouter API key', key, 'Create one at <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a>. It’s stored only on your panel.'),
         field('Model', modelInput(ob.model, (v) => { ob.model = v; }), 'Any OpenRouter model works. Fast, inexpensive models are ideal here.'),
         h('div', { class: 'actions' }, test, status),
@@ -450,7 +455,7 @@ function showOnboarding() {
           h('h1', {}, `${ob.name || 'Your panel'} is live`),
           h('p', { class: 'lede', style: { margin: '10px auto 0' } }, 'Look up: your screen just changed. Your widgets will fill in over the next few seconds.')),
         h('div', { style: { margin: '32px 0' } }, preview()),
-        h('div', { class: 'callout' }, h('b', {}, 'Next: connect your own apps. '), 'Add a Webhook widget and you get a URL. POST a number, a list or a message to it from a script, Zapier, n8n, GitHub Actions, Home Assistant or iOS Shortcuts, and it shows up on the panel.'),
+        h('div', { class: 'callout' }, h('b', {}, 'Next: connect your own apps. '), 'Add a Push data widget and you get a URL. POST a number, a list or a message to it from a script, Zapier, n8n, GitHub Actions, Home Assistant or iOS Shortcuts, and it shows up on the panel.'),
         h('div', { class: 'step-foot' }, h('span'), h('button', { class: 'btn primary', onclick: () => boot() }, 'Open dashboard')));
     },
   };
@@ -530,7 +535,9 @@ function openEvents(onChange) {
   events.addEventListener('open', () => onChange('live'));
   events.addEventListener('error', () => onChange('off'));
   events.addEventListener('widget', (e) => { const w = JSON.parse(e.data); if (w) { merge(w); onChange('data', w.id); } });
-  events.addEventListener('state', (e) => { const s = JSON.parse(e.data); s.widgets.forEach(merge); onChange('data'); });
+  const setFocus = (f) => { B.focus = f; for (const fn of [...focusListeners]) fn(f); };
+  events.addEventListener('state', (e) => { const s = JSON.parse(e.data); s.widgets.forEach(merge); setFocus(s.focus); onChange('data'); });
+  events.addEventListener('focus', (e) => setFocus(JSON.parse(e.data)));
   events.addEventListener('update', (e) => setUpdate(JSON.parse(e.data)));
   events.addEventListener('audio', (e) => { const a = JSON.parse(e.data); for (const fn of [...audioListeners]) fn(a); });
 }
@@ -539,27 +546,50 @@ function closeEvents() {
   events = null;
 }
 
+const SECTIONS = [['layout', 'Screen', 'screen'], ['gallery', 'Gallery', 'gallery'], ['sound', 'Sound', 'speaker'], ['settings', 'Settings', 'settings']];
+let goTab = () => {};
+const focusListeners = new Set();
+
+function focusBar() {
+  const el = h('div', { class: 'update', hidden: true });
+  const draw = (f) => {
+    if (!el.isConnected && el.dataset.drawn) { focusListeners.delete(draw); return; }
+    el.dataset.drawn = '1';
+    el.hidden = !f;
+    if (!f) return;
+    const clear = h('button', { class: 'btn small', onclick: () => busy(clear, () => api('POST', '/api/focus/dismiss')) }, 'Dismiss');
+    el.replaceChildren(h('div', { class: 'update-row' }, h('span', { class: 'update-dot' }),
+      h('div', { class: 'grow' }, h('b', {}, 'On the screen now'), h('div', { class: 'small muted' }, f.title)), clear));
+  };
+  focusListeners.add(draw);
+  draw(B.focus);
+  return el;
+}
+
 function showDashboard() {
   const live = h('span', { class: 'live off' }, h('i'), 'Connecting');
   const content = h('div');
-  const tabs = h('div', { class: 'tabs', role: 'tablist' });
-  const TABS = [['layout', 'Widgets'], ['sound', 'Sound'], ['settings', 'Settings'], ['devices', 'Devices']];
+  const nav = h('div', { class: 'nav-items', role: 'tablist' });
+  const heading = h('h1');
 
-  const drawTabs = () => tabs.replaceChildren(...TABS.map(([id, label]) => h('button', {
-    role: 'tab', 'aria-selected': String(tab === id), onclick: () => { tab = id; drawTabs(); drawContent(); },
-  }, label)));
-  const drawContent = () => content.replaceChildren(({ layout: layoutTab, sound: soundTab, settings: settingsTab, devices: devicesTab })[tab]());
+  const drawNav = () => nav.replaceChildren(...SECTIONS.map(([id, label, ic]) => h('button', {
+    role: 'tab', 'aria-selected': String(tab === id), onclick: () => goTab(id),
+  }, icon(ic), h('span', {}, label))));
+  const drawContent = () => {
+    heading.textContent = SECTIONS.find(([id]) => id === tab)[1];
+    page.classList.toggle('wide', tab === 'layout' || tab === 'gallery');
+    content.replaceChildren(({ layout: layoutTab, gallery: galleryTab, sound: soundTab, settings: settingsTab })[tab]());
+  };
+  const page = h('main', { class: 'page' },
+    h('div', { class: 'top' }, heading, live),
+    updateBanner(), focusBar(), content);
 
-  render(h('div', { class: `page${tab === 'layout' ? ' wide' : ''}`, id: 'page' },
-    h('div', { class: 'top' }, brand(B.settings.name), live),
-    updateBanner(),
-    tabs, content));
-  drawTabs();
+  goTab = (id) => { tab = id; drawNav(); drawContent(); window.scrollTo({ top: 0 }); };
+  render(h('div', { class: 'shell' },
+    h('nav', { class: 'nav', 'aria-label': 'Sections' }, h('div', { class: 'nav-brand' }, brand(), h('span', { class: 'small muted' }, B.settings.name)), nav),
+    page));
+  drawNav();
   drawContent();
-
-  const page = document.getElementById('page');
-  const syncWidth = () => page.classList.toggle('wide', tab === 'layout');
-  tabs.addEventListener('click', syncWidth);
 
   openEvents((kind) => {
     if (kind === 'live') { live.className = 'live'; live.lastChild.textContent = 'Live'; }
@@ -584,11 +614,11 @@ function layoutTab() {
 
   const draw = () => {
     if (!B.widgets.length) {
-      list.replaceChildren(h('div', { class: 'panel-pad' }, h('p', { class: 'muted' }, 'No widgets yet. Add one to get started.')));
+      list.replaceChildren(h('div', { class: 'panel-pad' }, h('p', { class: 'muted' }, 'Nothing on the screen yet. Add your first widget from the Gallery.')));
     } else {
       list.replaceChildren(...B.widgets.map((w, i) => {
         const d = def(w.type);
-        const sub = w.error ? w.error : w.type === 'webhook' ? (w.updatedAt ? `Webhook · updated ${ago(w.updatedAt)}` : 'Webhook · waiting for first update') : d?.name;
+        const sub = w.error ? w.error : w.type === 'webhook' ? (w.updatedAt ? `Updated ${ago(w.updatedAt)}` : 'Waiting for its first update') : d?.name;
         return h('div', { class: 'wrow', onclick: () => openEditor(w.id) },
           h('span', { class: 'ic' }, icon(w.type)),
           h('div', { class: 'grow' }, h('div', { class: 'title' }, w.title), h('div', { class: 'sub', style: w.error ? { color: 'var(--bad)' } : null }, sub)),
@@ -615,12 +645,11 @@ function layoutTab() {
   return h('div', { class: 'layout' },
     h('div', { class: 'sticky' },
       preview(),
-      h('div', { class: 'preview-cap' }, h('span', {}, `Live preview · ${B.settings.grid.cols} × ${B.settings.grid.rows} grid`), reload)),
+      h('div', { class: 'preview-cap' }, h('span', {}, `${B.settings.grid.cols} × ${B.settings.grid.rows} grid`), reload)),
     h('div', {},
-      h('div', { class: 'group-h' }, h('h2', {}, 'Widgets'), h('span', { class: 'small muted' }, 'Top to bottom fills left to right')),
+      h('div', { class: 'group-h' }, h('h2', {}, 'Widgets'), h('button', { class: 'btn primary small', onclick: () => goTab('gallery') }, icon('plus'), 'Add')),
       list,
-      capacity,
-      h('div', { style: { marginTop: '16px' } }, h('button', { class: 'btn primary block', onclick: openGallery }, icon('plus'), 'Add widget'))));
+      capacity));
 }
 
 // ---------------------------------------------------------------- sheet
@@ -644,23 +673,55 @@ function openSheet({ title, body, footer, onClose }) {
   return close;
 }
 
-function openGallery() {
-  const close = openSheet({
-    title: 'Add a widget',
-    body: h('div', { class: 'gallery' }, B.catalog.map((c) => h('button', {
-      type: 'button', class: 'pick',
-      onclick: async (e) => {
-        const btn = e.currentTarget;
-        btn.style.opacity = .5;
-        const w = await busy(null, () => api('POST', '/api/widgets', { type: c.type, draft: true }));
-        if (!w) { btn.style.opacity = 1; return; }
-        B.widgets.push(w);
-        refreshRows?.();
-        close();
-        openEditor(w.id, { isNew: true });
-      },
-    }, h('span', { class: 'ic' }, icon(c.type)), h('span', {}, h('b', {}, c.name), h('span', {}, c.description))))),
-  });
+// ---------------------------------------------------------------- gallery
+
+async function addWidget(type, recipe = null) {
+  const w = await busy(null, () => api('POST', '/api/widgets', { type, draft: true }));
+  if (!w) return;
+  B.widgets.push(w);
+  refreshRows?.();
+  openEditor(w.id, { isNew: true, recipe });
+}
+
+const pickRow = (ic, name, description, onclick) => h('button', { type: 'button', class: 'pick', onclick },
+  h('span', { class: 'ic' }, icon(ic)), h('span', {}, h('b', {}, name), h('span', {}, description)));
+
+function installFromLink() {
+  const source = h('textarea', { class: 'input mono', rows: '2', placeholder: 'https://… or a widget someone shared', spellcheck: 'false', 'aria-label': 'Link or shared widget' });
+  const go = h('button', { class: 'btn small', onclick: () => busy(go, async () => {
+    const recipe = await api('POST', '/api/gallery/resolve', { source: source.value });
+    source.value = '';
+    await addWidget(recipe.type, recipe);
+  }) }, 'Install');
+  return h('section', { class: 'install' },
+    h('div', { class: 'group-h' }, h('h2', {}, 'Install from a link')),
+    h('p', { class: 'small muted', style: { marginBottom: '10px' } }, 'Shared widgets are settings, not code, and you see every one before it’s added.'),
+    source, h('div', { class: 'actions', style: { marginTop: '10px' } }, go));
+}
+
+function galleryTab() {
+  const search = h('input', { class: 'input', type: 'search', placeholder: 'Search widgets', 'aria-label': 'Search widgets' });
+  const list = h('div');
+  let community = [];
+
+  const draw = () => {
+    const q = search.value.trim().toLowerCase();
+    const hit = (x) => !q || `${x.name} ${x.description} ${x.group}`.toLowerCase().includes(q);
+    const section = (title, rows) => (rows.length ? [h('div', { class: 'group-h' }, h('h2', {}, title)), h('div', { class: 'gallery' }, rows)] : []);
+    const types = B.catalog.filter(hit);
+    const groups = [...new Set(B.catalog.map((c) => c.group))];
+    const ready = [...(def('api')?.templates || []).map((t) => ({ ...t, type: 'api' })), ...community].filter(hit);
+    const shown = [
+      ...groups.flatMap((g) => section(g, types.filter((c) => c.group === g).map((c) => pickRow(c.type, c.name, c.description, () => addWidget(c.type))))),
+      ...section('Ready to use', ready.map((r) => pickRow(r.type, r.name, r.description, () => addWidget(r.type, r)))),
+    ];
+    list.replaceChildren(...(shown.length ? shown : [h('p', { class: 'muted', style: { marginTop: '24px' } }, `Nothing matches “${search.value}”. A shared widget can be installed from a link below.`)]));
+  };
+  search.addEventListener('input', draw);
+  draw();
+  api('GET', '/api/gallery').then((items) => { community = items; draw(); }).catch(() => {});
+  list.style.marginTop = '26px';
+  return h('div', {}, search, list, installFromLink());
 }
 
 // ---------------------------------------------------------------- widget editor
@@ -676,7 +737,7 @@ function fieldControl(f, cfg, onChange) {
   const ph = saved ? `Saved (${v}). Type to replace.` : f.placeholder || '';
   switch (f.type) {
     case 'toggle':
-      return toggle(f.label, v ?? f.default ?? false, onChange);
+      return toggle(f.label, v ?? f.default ?? false, (val) => onChange(val, true));
     case 'select': {
       const sel = h('select', { class: 'input', onchange: () => onChange(sel.value, true) }, f.options.map((o) => h('option', { value: o.value }, o.label)));
       sel.value = v ?? f.default ?? f.options[0].value;
@@ -697,6 +758,11 @@ function fieldControl(f, cfg, onChange) {
       inp.value = v ?? '';
       return inp;
     }
+    case 'time': {
+      const inp = h('input', { class: 'input', type: 'time', oninput: () => onChange(inp.value) });
+      inp.value = v ?? f.default ?? '';
+      return inp;
+    }
     case 'date': {
       const inp = h('input', { class: 'input', type: 'date', oninput: () => onChange(inp.value) });
       inp.value = v ?? '';
@@ -712,6 +778,7 @@ function fieldControl(f, cfg, onChange) {
 
 function buildFields(fields, cfg, onAnyChange) {
   const wrap = h('div', { class: 'fields' });
+  for (const f of fields) if (cfg[f.key] === undefined && f.default !== undefined) cfg[f.key] = f.default;
   const draw = () => {
     const basic = [];
     const advanced = [];
@@ -724,7 +791,8 @@ function buildFields(fields, cfg, onAnyChange) {
           onAnyChange?.();
           if (structural) draw();
         });
-        return x.type === 'toggle' ? control : field(x.label, control, x.help);
+        if (x.type !== 'toggle') return field(x.label, control, x.help);
+        return x.help ? h('div', {}, control, h('p', { class: 'help small muted' }, x.help)) : control;
       };
       let node;
       if (f.half && visible[i + 1]?.half) { node = h('div', { class: 'half-row' }, make(f), make(visible[i + 1])); i++; }
@@ -732,9 +800,9 @@ function buildFields(fields, cfg, onAnyChange) {
       (f.advanced ? advanced : basic).push(node);
     }
     const mapping = fields.some((f) => f.advanced && /Path$/.test(f.key));
-    wrap.replaceChildren(...basic, advanced.length ? h('details', { class: 'more' },
+    wrap.replaceChildren(...basic, ...[advanced.length ? h('details', { class: 'more' },
       h('summary', {}, mapping ? 'Map fields from your own JSON' : 'More options'),
-      h('div', { class: 'fields' }, mapping ? h('p', { class: 'help small muted' }, 'Only needed if the sender’s JSON doesn’t match the format below. Use dot paths like data.total or items[0].name.') : null, advanced)) : null);
+      h('div', { class: 'fields' }, mapping ? h('p', { class: 'help small muted' }, 'Only needed if the sender’s JSON doesn’t match the format below. Use dot paths like data.total or items[0].name.') : null, advanced)) : null].filter(Boolean));
   };
   draw();
   wrap.redraw = draw;
@@ -818,11 +886,11 @@ function briefSection(w, onUpdated) {
   const regen = h('button', { class: 'btn small', onclick: () => busy(regen, async () => {
     const updated = await api('POST', `/api/widgets/${w.id}/refresh`);
     onUpdated(updated);
-    if (updated.error) toast(updated.error, true); else toast('Brief rewritten');
-  }) }, icon('refresh'), 'Rewrite now');
+    if (updated.error) toast(updated.error, true); else toast('Brief updated');
+  }) }, icon('refresh'), 'Update now');
   return h('section', {},
-    h('h3', {}, 'Brief'),
-    B.settings.aiReady ? null : h('div', { class: 'callout', style: { marginBottom: '12px' } }, h('b', {}, 'Needs an OpenRouter key. '), 'Add one in Settings → Daily brief.'),
+    h('h3', {}, 'Latest brief'),
+    B.settings.aiReady ? null : h('div', { class: 'callout', style: { marginBottom: '12px' } }, h('b', {}, 'Needs an OpenRouter key. '), 'Add one in Settings → AI.'),
     w.data?.text ? h('p', { class: 'small', style: { color: 'var(--ink-2)', marginBottom: '12px' } }, w.data.text) : null,
     h('div', { class: 'actions' }, regen, w.data?.model ? h('span', { class: 'small muted mono' }, w.data.model) : null),
     details);
@@ -836,10 +904,12 @@ function fillTemplate(str, vals) {
 
 function applyTemplate(t, vals, cfg, draft) {
   // Start clean so leftovers from a previous setup don't confuse the mapping.
-  for (const k of Object.keys(cfg)) if (k !== 'includeInBrief') delete cfg[k];
-  Object.assign(cfg, { method: 'GET', auth: 'none', every: '5', view: 'stat', maxItems: 8 });
-  for (const [k, v] of Object.entries(t.config)) cfg[k] = fillTemplate(v, vals);
-  const tokenInput = t.inputs.find((i) => i.token);
+  if (t.type === undefined || t.type === 'api') {
+    for (const k of Object.keys(cfg)) if (k !== 'includeInBrief') delete cfg[k];
+    Object.assign(cfg, { method: 'GET', auth: 'none', every: '5', view: 'stat', maxItems: 8 });
+  }
+  for (const [k, v] of Object.entries(t.config)) cfg[k] = typeof v === 'string' ? fillTemplate(v, vals) : v;
+  const tokenInput = (t.inputs || []).find((i) => i.token);
   const token = tokenInput && (vals[tokenInput.key] || '').trim();
   if (token) {
     const [kind, header] = tokenInput.token.split(':');
@@ -864,27 +934,31 @@ function templatePicker(templates, { isNew }, onUse) {
         h('div', { class: 'label muted small' }, g),
         h('div', { class: 'chips' }, templates.filter((t) => t.group === g).map((t) => h('button', { type: 'button', class: 'chip', title: t.description, onclick: () => form(t) }, t.name))))));
   };
+  const use = (t, vals) => {
+    const missing = t.inputs.find((i) => !i.optional && !String(vals[i.key] || '').trim());
+    if (missing) return toast(`${missing.label} is needed`, true);
+    if (/\{(lat|lon)\}/.test(t.config.url || '') && !B.settings.location) return toast('Set the panel’s location in Settings first', true);
+    onUse(t, vals);
+    sec.replaceChildren(h('div', { class: 'callout small' }, h('b', {}, `${t.name} is set up. `), 'Check the test result below, then tap Add to panel.'), h('button', { class: 'btn ghost small', style: { marginTop: '8px' }, onclick: list }, 'Pick a different one'));
+  };
   const form = (t) => {
     const vals = Object.fromEntries(t.inputs.map((i) => [i.key, i.default || '']));
+    if (!t.inputs.length) return use(t, vals);
     const inputs = t.inputs.map((i) => {
       const inp = h('input', { class: `input${i.token ? ' mono' : ''}`, type: i.token ? 'password' : 'text', placeholder: i.placeholder || '', value: vals[i.key], autocomplete: 'off', spellcheck: 'false', oninput: () => { vals[i.key] = inp.value; } });
       return field(`${i.label}${i.optional ? ' (optional)' : ''}`, inp);
     });
-    const use = h('button', { class: 'btn primary small', onclick: () => {
-      const missing = t.inputs.find((i) => !i.optional && !String(vals[i.key] || '').trim());
-      if (missing) return toast(`${missing.label} is needed`, true);
-      if (/\{(lat|lon)\}/.test(t.config.url) && !B.settings.location) return toast('Set the panel’s location in Settings first', true);
-      onUse(t, vals);
-      sec.replaceChildren(h('div', { class: 'callout small' }, h('b', {}, `${t.name} is set up. `), 'Check the test result below, then tap Save.'), h('button', { class: 'btn ghost small', style: { marginTop: '8px' }, onclick: list }, 'Pick a different template'));
-    } }, 'Use template');
+    const go = h('button', { class: 'btn primary small', onclick: () => use(t, vals) }, 'Continue');
     sec.replaceChildren(
       h('h3', {}, t.name),
       h('p', { class: 'small muted', style: { margin: '-6px 0 14px' } }, t.description),
       h('div', { class: 'fields' }, inputs.length ? inputs : h('p', { class: 'small muted' }, 'Nothing to fill in.')),
-      h('div', { class: 'actions', style: { marginTop: '14px' } }, use, h('button', { class: 'btn ghost small', onclick: list }, 'Back')));
+      t.host ? h('p', { class: 'small muted', style: { marginTop: '12px' } }, `This widget talks to ${t.host}.`) : null,
+      h('div', { class: 'actions', style: { marginTop: '14px' } }, go, h('button', { class: 'btn ghost small', onclick: list }, 'Back')));
     sec.querySelector('input')?.focus();
   };
   list();
+  sec.open = form;
   return sec;
 }
 
@@ -1032,7 +1106,61 @@ function apiTester(w, cfg, onMapped) {
   return sec;
 }
 
-function openEditor(id, { isNew = false } = {}) {
+const MAX_PHOTO_SIDE = 2560;
+
+/** Shrink on the phone, so uploads are quick and the Pi never handles 12 MP files. */
+async function shrinkPhoto(file) {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, MAX_PHOTO_SIDE / Math.max(bitmap.width, bitmap.height));
+  const canvas = h('canvas', { width: Math.round(bitmap.width * scale), height: Math.round(bitmap.height * scale) });
+  canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  return new Promise((resolve) => { canvas.toBlob(resolve, 'image/jpeg', 0.86); });
+}
+
+function photosSection(w) {
+  const grid = h('div', { class: 'thumbs' });
+  const status = h('p', { class: 'small muted', style: { marginTop: '10px' } });
+  let names = [...(w.data?.photos || [])];
+  const draw = () => {
+    status.textContent = names.length ? `${names.length} photo${names.length === 1 ? '' : 's'}` : 'None yet. Pictures stay on the panel.';
+    grid.replaceChildren(...names.map((n) => h('div', { class: 'thumb' },
+      h('img', { src: `/api/photos/${encodeURIComponent(n)}`, alt: '', loading: 'lazy' }),
+      h('button', { class: 'btn icon', 'aria-label': 'Remove photo', onclick: async () => {
+        names = names.filter((x) => x !== n);
+        draw();
+        await api('DELETE', `/api/photos/${encodeURIComponent(n)}`).catch((e) => toast(e.message, true));
+      } }, icon('x')))));
+  };
+  const input = h('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true, onchange: () => busy(add, async () => {
+    const files = [...input.files];
+    let failed = 0;
+    for (const [i, file] of files.entries()) {
+      status.textContent = `Adding ${i + 1} of ${files.length}…`;
+      try {
+        const res = await fetch('/api/photos', { method: 'POST', body: await shrinkPhoto(file), credentials: 'same-origin' });
+        const out = await res.json();
+        if (!res.ok) throw new Error(out.error);
+        names.unshift(out.name);
+      } catch { failed++; }
+    }
+    input.value = '';
+    draw();
+    if (failed) toast(`${failed} photo${failed === 1 ? '' : 's'} couldn’t be read`, true);
+  }) });
+  const add = h('button', { class: 'btn small', onclick: () => input.click() }, icon('plus'), 'Add photos');
+  draw();
+  return h('section', {}, h('h3', {}, 'Photos'), input, h('div', { class: 'actions' }, add), status, grid);
+}
+
+function shareSection(w) {
+  if (['nowplaying', 'photos', 'tasks'].includes(w.type)) return null;
+  const btn = h('button', { class: 'btn small', onclick: () => busy(btn, async () => copy(JSON.stringify(await api('GET', `/api/widgets/${w.id}/share`)))) }, icon('share'), 'Copy widget');
+  return h('section', {}, h('h3', {}, 'Share'),
+    h('p', { class: 'small muted', style: { marginBottom: '12px' } }, 'Copies the widget’s setup for someone else to install. Keys, tokens and calendar links are left out.'),
+    btn);
+}
+
+function openEditor(id, { isNew = false, recipe = null } = {}) {
   const w = B.widgets.find((x) => x.id === id);
   if (!w) return;
   const d = def(w.type);
@@ -1085,7 +1213,9 @@ function openEditor(id, { isNew = false } = {}) {
     apiTools?.tester,
     w.type === 'tasks' ? tasksSection(w, updateLocal) : null,
     w.type === 'summary' ? briefSection(w, updateLocal) : null,
-    hook);
+    w.type === 'photos' ? photosSection(w) : null,
+    hook,
+    isNew ? null : shareSection(w));
 
   const del = h('button', { class: 'btn ghost danger', onclick: () => busy(del, async () => {
     if (!confirm(`Remove “${w.title}” from the panel?`)) return;
@@ -1115,8 +1245,16 @@ function openEditor(id, { isNew = false } = {}) {
     toast(isNew ? 'Added to the panel' : 'Saved');
   }) }, isNew ? 'Add to panel' : 'Save');
 
+  if (recipe && apiTools) apiTools.templates.open(recipe);
+  else if (recipe) {
+    applyTemplate(recipe, {}, cfg, draft);
+    title.value = draft.title;
+    drawSizes();
+    fields?.redraw();
+  }
+
   const close = openSheet({
-    title: isNew ? `New ${/^[A-Z]{2,}$/.test(d.name) ? d.name : d.name.toLowerCase()} widget` : w.title,
+    title: recipe?.name || (isNew ? d.name : w.title),
     body,
     footer: [del, h('span', { class: 'spacer', style: { flex: 1 } }), refresh, save],
     onClose: () => {
@@ -1449,46 +1587,75 @@ function settingsTab() {
 
   const sysRow = (k, v) => h('div', { class: 'row' }, h('span', { class: 'grow muted' }, k), h('span', { class: 'mono', style: { textAlign: 'right', wordBreak: 'break-all' } }, v));
 
+  const focusTest = h('button', { class: 'btn small', onclick: () => busy(focusTest, () => api('POST', '/api/focus/test')) }, 'Try it');
+
   return h('div', {},
-    h('div', { class: 'group-h' }, h('h2', {}, 'General')),
+    h('div', { class: 'group-h' }, h('h2', {}, 'Panel')),
     h('div', { class: 'panel panel-pad fields' },
-      field('Name', name),
+      field('Name', name, 'Also the AirPlay speaker’s name.'),
       field('Time zone', timezoneSelect(s.timezone, (v) => saveSettings({ timezone: v }))),
+      field('Location', locationPicker(s.location, (r) => saveSettings({ location: r })), 'Used for weather and travel time.'),
       h('div', { class: 'half-row' },
         field('Clock', seg([{ value: false, label: '12-hour' }, { value: true, label: '24-hour' }], s.clock24, (v) => saveSettings({ clock24: v }))),
-        field('Temperature', seg([{ value: 'imperial', label: '°F' }, { value: 'metric', label: '°C' }], s.units, (v) => saveSettings({ units: v })))),
-      field('Location', locationPicker(s.location, (r) => saveSettings({ location: r })), 'Used for weather.')),
+        field('Temperature', seg([{ value: 'imperial', label: '°F' }, { value: 'metric', label: '°C' }], s.units, (v) => saveSettings({ units: v }))))),
 
-    h('div', { class: 'group-h' }, h('h2', {}, 'Display')),
+    h('div', { class: 'group-h' }, h('h2', {}, 'Screen')),
     h('div', { class: 'panel panel-pad fields' },
-      h('div', { class: 'half-row' },
-        field('Columns', seg([1, 2, 3, 4, 5, 6].map((n) => ({ value: n, label: String(n) })), s.grid.cols, (v) => saveSettings({ grid: { cols: v } }))),
-        field('Rows', seg([1, 2, 3, 4].map((n) => ({ value: n, label: String(n) })), s.grid.rows, (v) => saveSettings({ grid: { rows: v } })))),
       field('Appearance', seg([{ value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }, { value: 'auto', label: 'Dark at night' }], s.theme, (v) => {
         nightRow.hidden = v !== 'auto';
         saveSettings({ theme: v });
       })),
-      nightRow),
+      nightRow,
+      h('div', { class: 'half-row' },
+        field('Columns', seg([1, 2, 3, 4, 5, 6].map((n) => ({ value: n, label: String(n) })), s.grid.cols, (v) => saveSettings({ grid: { cols: v } }))),
+        field('Rows', seg([1, 2, 3, 4].map((n) => ({ value: n, label: String(n) })), s.grid.rows, (v) => saveSettings({ grid: { rows: v } }))))),
 
-    h('div', { class: 'group-h' }, h('h2', {}, 'Daily brief')),
+    h('div', { class: 'group-h' }, h('h2', {}, 'Focus mode')),
     h('div', { class: 'panel panel-pad fields' },
-      field('OpenRouter API key', keyInput, 'Get one at <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a>. Stored only on your panel.'),
-      field('Model', modelInput(ai.model, (v) => { ai.model = v; }), 'Any model ID from <a href="https://openrouter.ai/models" target="_blank" rel="noopener">openrouter.ai/models</a>.'),
+      h('div', {},
+        toggle('Take over the screen when something needs you', s.focus.enabled, (v) => saveSettings({ focus: { enabled: v } })),
+        h('p', { class: 'help small muted' }, 'Upcoming events, when it’s time to leave, sites going down, and webhooks that ask for it. Clears by itself, or dismiss it from here.')),
+      field('Show events this early', seg([2, 5, 10, 15].map((n) => ({ value: n, label: `${n} min` })), s.focus.minutes, (v) => saveSettings({ focus: { minutes: v } }))),
+      h('div', { class: 'actions' }, focusTest)),
+
+    h('div', { class: 'group-h' }, h('h2', {}, 'AI')),
+    h('div', { class: 'panel panel-pad fields' },
+      field('OpenRouter API key', keyInput, 'Powers the AI brief. Get one at <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a>. Stored only on your panel.'),
+      field('Model', modelInput(ai.model, (v) => { ai.model = v; }), 'Any model ID from <a href="https://openrouter.ai/models" target="_blank" rel="noopener">openrouter.ai/models</a>. How often the brief updates is set on the widget.'),
       h('div', { class: 'actions' }, aiSave, testBtn, aiStatus)),
 
-    h('div', { class: 'group-h' }, h('h2', {}, 'Software update')),
+    h('div', { class: 'group-h' }, h('h2', {}, 'Phones and laptops')),
+    devicesSection(),
+
+    h('div', { class: 'group-h' }, h('h2', {}, 'Software')),
     updateSection(),
 
-    h('div', { class: 'group-h' }, h('h2', {}, 'System')),
+    h('div', { class: 'group-h' }, h('h2', {}, 'About this panel')),
     h('div', { class: 'panel rows-list' },
       sysRow('Address', sys.urls.name),
       sys.urls.ip ? sysRow('IP address', sys.urls.ip) : null,
-      sysRow('Data', sys.dataDir)));
+      sysRow('Data', sys.dataDir)),
+
+    h('div', { class: 'group-h' }, h('h2', {}, 'Reset')),
+    resetSection());
 }
 
-// ---------------------------------------------------------------- devices
+function resetSection() {
+  const input = h('input', { class: 'input', placeholder: 'reset', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Type reset to confirm', oninput: () => { go.disabled = input.value.trim().toLowerCase() !== 'reset'; } });
+  const go = h('button', { class: 'btn danger', disabled: true, onclick: () => busy(go, async () => {
+    await api('POST', '/api/system/reset', { confirm: 'reset' });
+    toast('Panel has been reset');
+    if (B.system.managed) waitForRestart();
+    else setTimeout(() => location.reload(), 600);
+  }) }, 'Erase this panel');
+  const more = h('details', { class: 'more' }, h('summary', {}, 'Erase everything and start over'),
+    h('div', { class: 'fields' },
+      h('p', { class: 'small muted' }, 'Removes all widgets, photos, settings, your AI key and every paired phone. The screen goes back to first-time setup. This can’t be undone. Type reset to confirm.'),
+      h('div', { class: 'actions reset-row' }, input, go)));
+  return h('div', { class: 'panel panel-pad' }, more);
+}
 
-function devicesTab() {
+function devicesSection() {
   const list = h('div', { class: 'panel rows-list' });
   const draw = () => {
     list.replaceChildren(...(B.sessions.length ? B.sessions.map((s) => {
@@ -1504,16 +1671,11 @@ function devicesTab() {
           h('div', { class: 'title' }, s.name, s.current ? h('span', { class: 'small muted', style: { fontWeight: 400 } }, '  · this device') : null),
           h('div', { class: 'sub' }, `Paired ${new Date(s.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · active ${ago(s.lastSeen)}`)),
         revoke);
-    }) : [h('div', { class: 'panel-pad muted' }, 'No paired devices yet.')]));
+    }) : [h('div', { class: 'row muted' }, 'No paired devices yet.')]));
   };
   draw();
-  return h('div', {},
-    h('div', { class: 'group-h' }, h('h2', {}, 'Paired devices')),
-    list,
-    h('div', { class: 'callout', style: { marginTop: '16px' } },
-      h('b', {}, 'Adding another phone or laptop? '),
-      `Open ${B.system.urls.name}${B.system.urls.ip ? ` (or ${B.system.urls.ip})` : ''} on it and type the code that appears on the panel.`),
-    B.system.local ? h('p', { class: 'small muted', style: { marginTop: '12px' } }, 'You’re on the panel itself, so you don’t need to pair.') : null);
+  return h('div', {}, list,
+    h('p', { class: 'small muted', style: { marginTop: '10px' } }, `To add one, open ${B.system.urls.name} on it and type the code that appears on the panel.`));
 }
 
 boot();

@@ -116,8 +116,8 @@ function trim(v, depth = 0) {
 
 export default {
   type: 'api',
-  name: 'API',
-  description: 'Pull a number, list or message from any API. Templates for GitHub, Stripe, crypto prices, Home Assistant and more.',
+  name: 'Pull data',
+  description: 'Panel fetches a number, list or message from any API.',
   size: { w: 1, h: 1 },
   templates: TEMPLATES,
   fields: [

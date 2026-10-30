@@ -10,8 +10,16 @@ import status from './status.js';
 import countdown from './countdown.js';
 import note from './note.js';
 import nowplaying from './nowplaying.js';
+import photos from './photos.js';
 
-const all = [summary, clock, weather, calendar, tasks, nowplaying, webhook, api, headlines, status, countdown, note];
+const groups = [
+  ['Your day', [summary, clock, calendar, weather, tasks, countdown, note]],
+  ['Home', [photos, nowplaying]],
+  ['Keep an eye on', [headlines, status]],
+  ['Your own data', [webhook, api]],
+];
+const all = groups.flatMap(([, list]) => list);
+const groupOf = (t) => groups.find(([, list]) => list.includes(t))[0];
 
 export const types = Object.fromEntries(all.map((t) => [t.type, t]));
 
@@ -20,6 +28,7 @@ export function catalog() {
   return all.map((t) => ({
     type: t.type,
     name: t.name,
+    group: groupOf(t),
     description: t.description,
     size: t.size,
     fields: t.fields,

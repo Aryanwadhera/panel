@@ -36,3 +36,13 @@ test('a lookup failure leaves the calendar working', async () => {
   await addMaps(events, { until: new Date('2026-10-31T04:00:00Z'), now: new Date('2026-10-30T15:00:00Z'), lookup });
   assert.equal(events[0].map, undefined);
 });
+
+test('adds travel time and a leave-by time for today’s events', async () => {
+  const events = [{ title: 'Dinner', location: '9 Harbor St, Boston', start: '2026-10-30T18:00:00Z', end: '2026-10-30T19:00:00Z' }];
+  await addMaps(events, {
+    until: new Date('2026-10-31T04:00:00Z'), now: new Date('2026-10-30T15:00:00Z'),
+    from: '1 Home Rd, Boston', lookup: async () => ({ lat: 42.3, lon: -71 }), route: async () => 25, gap: 0,
+  });
+  assert.equal(events[0].travel.minutes, 25);
+  assert.equal(events[0].travel.leaveBy, '2026-10-30T17:30:00.000Z');
+});
