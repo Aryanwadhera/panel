@@ -17,6 +17,7 @@ import { SAMPLES } from './lib/views.js';
 import { HttpError, VERSION, fetchJson } from './lib/http.js';
 import { isValidTimeZone, tzParts } from './lib/time.js';
 import { complete, listModels } from './lib/openrouter.js';
+import { mapTile } from './lib/map.js';
 import { createUpdater } from './updater.js';
 import { createAudio } from './audio.js';
 
@@ -494,6 +495,13 @@ route('GET', '/api/geocode', async (req, res, params, url) => {
     detail: [r.admin1, r.country].filter(Boolean).join(', '),
     lat: r.latitude, lon: r.longitude, timezone: r.timezone,
   }));
+});
+
+route('GET', '/api/map/:x/:y', async (req, res, { x, y }) => {
+  if (!/^\d{1,6}$/.test(x) || !/^\d{1,6}$/.test(y)) throw new HttpError(400, 'Not a map tile');
+  const png = await mapTile(+x, +y).catch((err) => { throw new HttpError(502, err.message); });
+  res.writeHead(200, { ...SECURITY_HEADERS, 'Content-Type': 'image/png', 'Cache-Control': 'private, max-age=604800' });
+  res.end(png);
 });
 
 route('GET', '/api/ai/models', () => listModels());

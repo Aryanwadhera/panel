@@ -87,7 +87,7 @@ It takes a few minutes. The installer:
 2. Downloads Panel to `~/panel` and runs it as a system service, so it starts on boot and restarts if it crashes.
 3. Offers to rename the Pi to `panel`, so it's reachable at **http://panel.local**.
 4. Sets up sound: PipeWire, Bluetooth audio and an AirPlay receiver.
-5. Sets the screen to open Panel full-screen on boot and turns off screen blanking. On the Desktop edition it uses the desktop's autostart; on Lite it runs a minimal kiosk session called [cage](https://github.com/cage-kiosk/cage).
+5. Sets the screen to open Panel full-screen on boot and turns off screen blanking. It runs in [cage](https://github.com/cage-kiosk/cage), a bare kiosk session that shows Panel and nothing else, so desktop pop-ups (Bluetooth "Connected" messages, update notices) can never cover the screen or need dismissing. On the Desktop edition the desktop is still installed: run `panel desktop` whenever you want it.
 6. Asks to reboot.
 
 Running the same command again is safe: it updates an existing install in place.
@@ -104,6 +104,7 @@ Set these before `bash`, for example: `curl -fsSL … | PANEL_PORT=8080 bash`
 | `PANEL_DIR` | `~/panel` | Where the code lives |
 | `PANEL_PORT` | `80` | Web port. Falls back to `8080` if 80 is taken |
 | `PANEL_KIOSK` | `auto` | `yes` / `no`: open the display full-screen on boot |
+| `PANEL_KIOSK_MODE` | `kiosk` | `desktop` runs Panel inside the normal Pi desktop instead. Desktop pop-ups can then appear over it. |
 | `PANEL_AUDIO` | `yes` | `no` skips speakers, Bluetooth audio and AirPlay |
 | `PANEL_HOSTNAME` | (asks) | Rename the device, e.g. `kitchen` → `http://kitchen.local` |
 | `PANEL_REPO` | this repo | Install from a fork |
@@ -149,7 +150,7 @@ Open **http://panel.local** on any paired phone or laptop.
 | **Daily brief** | 2–4 sentences about your day, written from your other widgets | OpenRouter key |
 | **Clock** | Time and date, plus extra time zones when there's room | |
 | **Weather** | Now, today's high and low, rain chance, and a forecast when there's room | A city (via [Open-Meteo](https://open-meteo.com), no key) |
-| **Calendar** | Today and the next few days, with the current event marked. Handles repeating events, exceptions and time zones | A private iCal (`.ics`) link |
+| **Calendar** | Today and the next few days, with the current event marked. Handles repeating events, exceptions and time zones. If an event still to come today has an address, a map of it appears at 2 rows or taller | A private iCal (`.ics`) link |
 | **Tasks** | A to-do list you edit from your phone or by webhook | |
 | **Now playing** | The song playing over AirPlay: album art, artist, progress | AirPlay on (it is by default) |
 | **Webhook** | A number, list, event feed, message or progress bar | Whatever you send it |
@@ -394,7 +395,7 @@ To run a beta channel, push to another branch and install test devices with `PAN
 
 - **Local first.** Panel runs entirely on your Pi. Settings, widget data and paired devices are stored in `~/.panel`, readable only by your user.
 - **AirPlay** lets anyone on your Wi‑Fi play music to the panel, like any AirPlay speaker. Turn it off in the Sound tab if that's not what you want.
-- **What leaves the device:** requests to the services you configure (your calendar, feeds, APIs, sites to check); [Open-Meteo](https://open-meteo.com) for weather and city search; OpenRouter, only if you set up the brief; GitHub, to check for updates. No analytics or telemetry.
+- **What leaves the device:** requests to the services you configure (your calendar, feeds, APIs, sites to check); [Open-Meteo](https://open-meteo.com) for weather and city search; [OpenStreetMap](https://www.openstreetmap.org) for calendar maps, which receives the addresses of today's events (turn off **Show a map** on the widget to stop this); OpenRouter, only if you set up the brief; GitHub, to check for updates. No analytics or telemetry.
 - **Pairing.** Managing the panel requires a code that only appears on its screen, so you have to be able to see it. Codes expire after 5 minutes, and five wrong guesses replace the code with a new one. Paired browsers get a long-lived, HttpOnly cookie, and you can disconnect any of them from **Devices**.
 - **Trusted locally.** Requests from the Pi itself (the kiosk and the `panel` command) don't need pairing. Requests forwarded by a proxy or tunnel are never treated as local.
 - **Secrets stay put.** API keys, calendar links and custom headers are masked in every API response, including to paired devices.
@@ -410,6 +411,8 @@ panel status      Is it running, and where to manage it
 panel pair        Show a pairing code in the terminal (handy if the screen is off)
 panel logs        Follow the server log
 panel reload      Reload what's on the screen
+panel desktop     Show the Pi's desktop instead of the panel (until reboot)
+panel kiosk       Put the panel back on screen
 panel restart     Restart the server
 panel update      Install the latest version, showing what's new
 panel reset       Start over (erases widgets, settings and paired devices)
@@ -429,7 +432,13 @@ Some Android phones, Windows PCs and Docker containers can't resolve `.local` na
 <details>
 <summary><b>The screen shows the desktop, or nothing</b></summary>
 
-Run `panel status`. If the server is running, check that the Pi boots into the desktop automatically: `sudo raspi-config` → *System Options* → *Boot / Auto Login* → *Desktop Autologin*. Then reboot. On Lite, check the kiosk with `systemctl status panel-kiosk`.
+Run `panel status`. If the server is running, check the display with `systemctl status panel-kiosk` and restart it with `panel kiosk`. If you used `panel desktop`, `panel kiosk` (or a reboot) brings the panel back.
+</details>
+
+<details>
+<summary><b>A pop-up on the screen is asking me to press OK</b></summary>
+
+That comes from the Raspberry Pi desktop, not Panel. For example, its Bluetooth icon announces every speaker that connects. Installs from before kiosk mode ran Panel inside the desktop. Rerun the install command to switch to kiosk mode, where nothing but Panel can appear on the screen, then reboot. Your widgets and settings are kept.
 </details>
 
 <details>
@@ -460,6 +469,12 @@ The Sound tab explains most problems itself. If it says the sound system isn't r
 <summary><b>My Bluetooth speaker won't pair or keeps disconnecting</b></summary>
 
 Make sure it's in pairing mode and isn't connected to a phone at the same time: most speakers accept one connection. If it was paired before, tap **Forget**, then **Find speakers** and **Pair** again. Keep it within a few metres of the Pi. On a Pi 3, Wi‑Fi and Bluetooth share a radio, so a USB speaker is the more reliable choice there.
+</details>
+
+<details>
+<summary><b>AirPlay over Bluetooth is choppy</b></summary>
+
+The Pi's Wi‑Fi and Bluetooth share one radio, and 2.4 GHz Wi‑Fi competes with Bluetooth directly. Put the Pi on 5 GHz Wi‑Fi or Ethernet, keep the speaker within a few metres with a clear line to the Pi, and keep USB 3 drives away from it. If the music still cuts out, rerun the installer to get the current sound settings and reboot. A USB speaker or the headphone jack avoids the shared radio entirely.
 </details>
 
 <details>
@@ -519,7 +534,7 @@ flowchart LR
 - **The server** (`server/`) is plain Node.js with a single dependency (for QR codes). It stores settings in JSON, runs a scheduler that keeps each widget fresh, accepts webhooks, and pushes every change to connected screens over server-sent events.
 - **The display** (`web/display.html`) is a full-screen page in Chromium. It keeps a live connection, redraws only the cards that changed, sizes everything relative to the screen, and reloads itself when the server restarts after an update.
 - **The manage app** (`web/manage.html`) is a phone-first page served by the Pi itself, with no build step and no framework.
-- **The installer** sets up a `systemd` service for the server and an autostart entry (or a `cage` kiosk service on Lite) for the browser.
+- **The installer** sets up two `systemd` services: one for the server, and one that runs Chromium in a `cage` kiosk session on the Pi's screen from boot, with no desktop underneath.
 
 ## Development
 

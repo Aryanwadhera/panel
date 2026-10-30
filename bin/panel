@@ -39,6 +39,20 @@ case "${1:-help}" in
   restart)
     sudo systemctl restart panel && echo "Restarted."
     ;;
+  desktop)
+    # Swap the kiosk for the normal desktop until the next reboot (or `panel kiosk`).
+    if ! systemctl list-unit-files lightdm.service >/dev/null 2>&1 || ! systemctl cat lightdm.service >/dev/null 2>&1; then
+      echo "This Pi has no desktop installed (Raspberry Pi OS Lite)."; exit 1
+    fi
+    sudo systemctl stop panel-kiosk 2>/dev/null || true
+    sudo systemctl start lightdm
+    echo "Showing the desktop. Run 'panel kiosk' or reboot to bring the panel back."
+    ;;
+  kiosk)
+    sudo systemctl stop lightdm 2>/dev/null || true
+    sudo systemctl start panel-kiosk
+    echo "The panel is back on screen."
+    ;;
   reload)
     curl -fs -X POST "$BASE/api/display/reload" >/dev/null && echo "Told the screen to reload."
     ;;
@@ -91,6 +105,12 @@ case "${1:-help}" in
     sudo systemctl disable --now panel panel-kiosk 2>/dev/null || true
     sudo rm -f /etc/systemd/system/panel.service /etc/systemd/system/panel-kiosk.service /usr/local/bin/panel
     sudo systemctl daemon-reload
+    # Boot back into the desktop, if there is one.
+    if systemctl cat lightdm.service >/dev/null 2>&1; then
+      if command -v raspi-config >/dev/null; then sudo raspi-config nonint do_boot_behaviour B4; else sudo systemctl set-default graphical.target; fi
+    fi
+    sudo rm -f /etc/NetworkManager/conf.d/80-panel-wifi.conf
+    rm -f "$HOME/.config/pipewire/pipewire.conf.d/80-panel.conf" "$HOME/.config/pipewire/pipewire-pulse.conf.d/80-panel.conf"
     sed -i "\#$DIR/bin/kiosk.sh#d" "$HOME/.config/labwc/autostart" "$HOME/.config/wayfire.ini" "$HOME/.config/lxsession/LXDE-pi/autostart" 2>/dev/null || true
     echo "Removed the service and autostart entries."
     echo "Your data is still in $DATA and the code in $DIR. Delete them with:"
@@ -104,6 +124,8 @@ ${bold}panel${reset}: manage your Panel
   panel pair        Show a code to connect a phone or laptop
   panel logs        Follow the server log
   panel reload      Reload what's on the screen
+  panel desktop     Show the Pi's desktop instead of the panel (until reboot)
+  panel kiosk       Put the panel back on screen
   panel restart     Restart the server
   panel update      Install the latest version (also in Settings on the web)
   panel reset       Start over (erases widgets and settings)

@@ -40,7 +40,8 @@ while true; do
   "$BROWSER" \
     --kiosk --app="$URL" \
     --user-data-dir="$PROFILE" \
-    --noerrdialogs --disable-infobars --no-first-run \
+    --noerrdialogs --disable-infobars --no-first-run --no-default-browser-check \
+    --deny-permission-prompts --disable-notifications \
     --disable-session-crashed-bubble --disable-features=Translate,TranslateUI,InfiniteSessionRestore \
     --overscroll-history-navigation=0 --disable-pinch \
     --check-for-update-interval=31536000 \

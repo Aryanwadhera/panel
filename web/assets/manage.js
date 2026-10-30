@@ -1393,7 +1393,8 @@ function soundTab() {
     wrap.replaceChildren(...[
       ...(A.caps.sound ? speakers() : []),
       ...(A.caps.bluetooth ? bluetooth() : []),
-      ...(A.caps.airplay ? airplay() : []),
+      ...(A.caps.airplay ? airplay() : [h('div', { class: 'callout', style: { marginTop: '12px' } }, h('b', {}, 'AirPlay isn’t installed. '),
+        'The AirPlay receiver (shairport-sync) is missing from this Pi. Run the Panel installer again to add it.')]),
     ].filter(Boolean));
   }
 

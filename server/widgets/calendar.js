@@ -1,6 +1,7 @@
 import { fetchText } from '../lib/http.js';
 import { parseICS, expandEvents } from '../lib/ics.js';
 import { startOfDay, dateKey } from '../lib/time.js';
+import { addMaps } from '../lib/map.js';
 
 export default {
   type: 'calendar',
@@ -18,8 +19,10 @@ export default {
       { value: '1', label: 'Today only' }, { value: '3', label: '3 days' }, { value: '7', label: 'A week' },
     ] },
     { key: 'showLocation', label: 'Show locations', type: 'toggle', default: true },
+    { key: 'showMap', label: 'Show a map for today’s next address', type: 'toggle', default: true,
+      help: 'Addresses from today’s events are looked up with OpenStreetMap.' },
   ],
-  display: (c) => ({ showLocation: c.showLocation !== false }),
+  display: (c) => ({ showLocation: c.showLocation !== false, showMap: c.showMap !== false }),
 
   async fetch(config, ctx) {
     const urls = String(config.urls || '').split('\n').map((u) => u.trim().replace(/^webcal:\/\//i, 'https://')).filter(Boolean);
@@ -38,7 +41,9 @@ export default {
     });
     if (errors.length === urls.length) throw new Error(errors[0]);
     events.sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : b.allDay - a.allDay));
-    return { events: events.slice(0, 60), warning: errors[0] || null };
+    const shown = events.slice(0, 60);
+    if (config.showMap !== false) await addMaps(shown, { previous: ctx.previous, until: startOfDay(now, tz, 1) });
+    return { events: shown, warning: errors[0] || null };
   },
 
   summarize(data, config, ctx) {

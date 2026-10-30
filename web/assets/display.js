@@ -116,6 +116,7 @@ const R = {
     const tomorrow = dayKey(new Date(now.getTime() + 86400e3));
     const groups = new Map();
     let todayCount = 0;
+    let mapEvent = null;
     for (const e of evs) {
       const start = new Date(e.start), end = new Date(e.end);
       let key = dayKey(start);
@@ -123,6 +124,8 @@ const R = {
       if (key < today) continue;
       if (key === today && !e.allDay && end <= now && evs.length > 6) continue; // hide finished events when busy
       if (key === today) todayCount++;
+      // The next place to be today; a timed event beats an all-day one.
+      if (key === today && e.map && (e.allDay || end > now) && (!mapEvent || (mapEvent.allDay && !e.allDay))) mapEvent = e;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(e);
     }
@@ -139,7 +142,12 @@ const R = {
         html += `<li class="ev${state}${cal}"><span class="t">${e.allDay ? 'All day' : esc(timeStr(start))}</span><span class="x"><b>${esc(e.title)}</b>${w.props.showLocation && e.location ? `<i>${esc(e.location.split('\n')[0])}</i>` : ''}</span></li>`;
       }
     }
-    return { meta: todayCount ? `${todayCount} today` : '', body: `<ol class="agenda">${html}</ol>`, fade: true };
+    return {
+      meta: todayCount ? `${todayCount} today` : '',
+      body: `<ol class="agenda">${html}</ol>`,
+      fade: true,
+      after: w.props.showMap && mapEvent ? eventMap(mapEvent) : '',
+    };
   },
 
   tasks(w) {
@@ -259,7 +267,7 @@ const R = {
         body: `<div class="np idle">${art}<div class="np-info">
           <div class="np-label">Now playing</div>
           <div class="np-title">Nothing playing</div>
-          <div class="np-artist">${d.airplay?.enabled === false ? 'AirPlay is turned off in Sound settings.' : `AirPlay to “${esc(name)}” from your iPhone or Mac.`}</div>
+          <div class="np-artist">${d.airplay?.available === false ? 'AirPlay isn’t installed. Run the Panel installer again.' : d.airplay?.enabled === false ? 'AirPlay is turned off in Sound settings.' : `AirPlay to “${esc(name)}” from your iPhone or Mac.`}</div>
         </div></div>`,
       };
     }
@@ -288,6 +296,27 @@ const R = {
   },
 };
 
+/** A map centred on the event, built from a strip of tiles around it. */
+function eventMap(e) {
+  const zoom = 16;
+  const tiles = 2 ** zoom;
+  const size = 24; // vh per tile
+  const lat = (e.map.lat * Math.PI) / 180;
+  const x = ((e.map.lon + 180) / 360) * tiles;
+  const y = ((1 - Math.log(Math.tan(lat) + 1 / Math.cos(lat)) / Math.PI) / 2) * tiles;
+  let html = '';
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -3; dx <= 3; dx++) {
+      const tx = Math.floor(x) + dx, ty = Math.floor(y) + dy;
+      if (tx < 0 || ty < 0 || tx >= tiles || ty >= tiles) continue;
+      html += `<img src="/api/map/${tx}/${ty}" alt="" loading="lazy" style="left:calc(50% + ${((tx - x) * size).toFixed(2)}vh);top:calc(50% + ${((ty - y) * size).toFixed(2)}vh);width:${size}vh;height:${size}vh">`;
+    }
+  }
+  const when = e.allDay ? 'Today' : timeStr(new Date(e.start));
+  return `<figure class="map"><div class="map-tiles">${html}</div><span class="map-pin"></span>
+    <figcaption>${esc(when)} · ${esc(e.title)}</figcaption><small>© OpenStreetMap</small></figure>`;
+}
+
 function waiting(w, title = 'Waiting for data') {
   if (w.error) return empty('Couldn’t update', w.error);
   return empty(title, w.type === 'webhook' ? 'Send a webhook to fill this in.' : 'Loading…');
@@ -313,7 +342,7 @@ function cardHtml(w) {
   try { r = (R[w.view] || R[w.type] || (() => empty('Unknown widget')))(w); } catch (err) { console.error(err); r = empty('Couldn’t draw this widget'); }
   const stale = w.error && w.data && !['summary'].includes(w.type) ? `<div class="note">Couldn’t refresh: ${esc(w.error)}</div>` : '';
   const head = r.bare ? '' : `<header class="card-h"><span class="title">${esc(w.title)}</span><span class="meta">${r.meta || ''}</span></header>`;
-  return { html: `${head}<div class="card-b${r.fade ? ' fade-able' : ''}">${r.body}</div>${stale}`, fit: r.fit };
+  return { html: `${head}<div class="card-b${r.fade ? ' fade-able' : ''}">${r.body}</div>${r.after || ''}${stale}`, fit: r.fit };
 }
 
 function fitText(el) {

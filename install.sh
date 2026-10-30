@@ -7,6 +7,7 @@
 #   PANEL_DIR=~/panel       where the code lives
 #   PANEL_PORT=80           web port (falls back to 8080 if 80 is taken)
 #   PANEL_KIOSK=auto        auto | yes | no : open the display full-screen on boot
+#   PANEL_KIOSK_MODE=kiosk  kiosk (nothing else on screen) | desktop (inside the Pi desktop)
 #   PANEL_AUDIO=yes         yes | no : speakers, Bluetooth audio and AirPlay
 #   PANEL_HOSTNAME=panel    rename the Pi so it's reachable at http://panel.local
 #   PANEL_BRANCH=main
@@ -112,10 +113,11 @@ if [ "$AUDIO" != "no" ]; then
   step "Setting up sound, Bluetooth and AirPlay"
   # PipeWire is the Pi's sound system (preinstalled on the Desktop edition);
   # BlueZ handles Bluetooth speakers; shairport-sync is the AirPlay receiver.
-  want=(pipewire pipewire-pulse pipewire-alsa wireplumber libspa-0.2-bluetooth pulseaudio-utils bluez alsa-utils shairport-sync)
+  want=(pipewire pipewire-pulse pipewire-alsa wireplumber libspa-0.2-bluetooth pulseaudio-utils bluez alsa-utils rtkit iw shairport-sync)
   pkgs=()
   for p in "${want[@]}"; do apt-cache show "$p" >/dev/null 2>&1 && pkgs+=("$p"); done
   sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${pkgs[@]}" >/dev/null
+  have shairport-sync || warn "shairport-sync isn't available for this OS, so AirPlay won't work."
 
   # Panel runs its own AirPlay receiver, named after your panel, so the
   # system-wide one that the package starts must not run as well.
@@ -131,15 +133,47 @@ if [ "$AUDIO" != "no" ]; then
   # WirePlumber normally turns on Bluetooth audio only for someone logged in
   # at the screen. A panel is headless, so keep it on all the time.
   mkdir -p "$HOME/.config/wireplumber/bluetooth.lua.d" "$HOME/.config/wireplumber/wireplumber.conf.d"
-  echo 'bluez_monitor.properties["with-logind"] = false' > "$HOME/.config/wireplumber/bluetooth.lua.d/80-panel.lua"
+  # Plain SBC is the lightest codec on the shared Wi-Fi/Bluetooth radio, and
+  # leaving out the call profiles stops speakers dropping to phone quality.
+  cat > "$HOME/.config/wireplumber/bluetooth.lua.d/80-panel.lua" <<'WPEOF'
+bluez_monitor.properties["with-logind"] = false
+bluez_monitor.properties["bluez5.roles"] = "[ a2dp_sink a2dp_source ]"
+bluez_monitor.properties["bluez5.codecs"] = "[ sbc ]"
+WPEOF
   cat > "$HOME/.config/wireplumber/wireplumber.conf.d/80-panel.conf" <<'WPEOF'
 wireplumber.profiles = {
   main = {
     monitor.bluez.seat-monitoring = disabled
   }
 }
+monitor.bluez.properties = {
+  bluez5.roles = [ a2dp_sink a2dp_source ]
+  bluez5.codecs = [ sbc ]
+}
 WPEOF
-  XDG_RUNTIME_DIR="/run/user/$USER_UID" systemctl --user restart wireplumber >/dev/null 2>&1 || true
+
+  # A panel plays music, not live audio, so trade latency for steady playback.
+  mkdir -p "$HOME/.config/pipewire/pipewire.conf.d" "$HOME/.config/pipewire/pipewire-pulse.conf.d"
+  cat > "$HOME/.config/pipewire/pipewire.conf.d/80-panel.conf" <<'PWEOF'
+context.properties = {
+  default.clock.quantum = 2048
+  default.clock.min-quantum = 1024
+  default.clock.max-quantum = 8192
+}
+PWEOF
+  cat > "$HOME/.config/pipewire/pipewire-pulse.conf.d/80-panel.conf" <<'PWEOF'
+pulse.properties = {
+  pulse.min.req = 1024/48000
+  pulse.min.quantum = 1024/48000
+}
+PWEOF
+  XDG_RUNTIME_DIR="/run/user/$USER_UID" systemctl --user restart pipewire pipewire-pulse wireplumber >/dev/null 2>&1 || true
+
+  # Wi-Fi power saving makes AirPlay's stream arrive in bursts.
+  if [ -d /etc/NetworkManager/conf.d ]; then
+    printf '[connection]\nwifi.powersave = 2\n' | sudo tee /etc/NetworkManager/conf.d/80-panel-wifi.conf >/dev/null
+  fi
+  have iw && sudo iw dev wlan0 set power_save off >/dev/null 2>&1 || true
   info "PipeWire, Bluetooth audio and AirPlay ready"
 fi
 
@@ -199,43 +233,52 @@ if [ -n "$WANT_HOSTNAME" ] && [ "$WANT_HOSTNAME" != "$current_host" ]; then
 fi
 
 # ------------------------------------------------------------------ kiosk
-setup_desktop_autostart() {
+# The display runs in cage: a bare session that shows one app and nothing
+# else. No taskbar, no Bluetooth "Connected" pop-ups, no update notices or
+# keyring prompts can ever cover the panel, and there's nothing anyone
+# would need a mouse to dismiss. `panel desktop` brings the normal desktop
+# back when you need it.
+
+remove_desktop_autostart() {
+  # Older versions of this installer started the display inside the desktop.
   local line="$DIR/bin/kiosk.sh"
-  # labwc (Raspberry Pi OS Bookworm, late 2024 onwards)
+  for f in "$HOME/.config/labwc/autostart" "$HOME/.config/wayfire.ini" "$HOME/.config/lxsession/LXDE-pi/autostart"; do
+    [ -f "$f" ] && sed -i "\#$line#d" "$f"
+  done
+  return 0
+}
+
+setup_desktop_autostart() {
+  # Only with PANEL_KIOSK_MODE=desktop: run inside the desktop instead.
+  # Desktop pop-ups can then appear over the panel.
+  local line="$DIR/bin/kiosk.sh"
   mkdir -p "$HOME/.config/labwc"
   touch "$HOME/.config/labwc/autostart"
   grep -qF "$line" "$HOME/.config/labwc/autostart" || echo "$line &" >> "$HOME/.config/labwc/autostart"
-  # wayfire (Raspberry Pi OS Bookworm, 2023 to 2024)
   if have wayfire; then
     local ini="$HOME/.config/wayfire.ini"
     touch "$ini"
     if ! grep -qF "$line" "$ini"; then
-      if grep -q '^\[autostart\]' "$ini"; then
-        sed -i "/^\[autostart\]/a panel = $line" "$ini"
-      else
-        printf '\n[autostart]\npanel = %s\n' "$line" >> "$ini"
-      fi
+      if grep -q '^\[autostart\]' "$ini"; then sed -i "/^\[autostart\]/a panel = $line" "$ini"
+      else printf '\n[autostart]\npanel = %s\n' "$line" >> "$ini"; fi
     fi
   fi
-  # LXDE / X11 (older Raspberry Pi OS)
   if [ -d /etc/xdg/lxsession/LXDE-pi ]; then
     local lx="$HOME/.config/lxsession/LXDE-pi/autostart"
     mkdir -p "$(dirname "$lx")"
     [ -f "$lx" ] || cp /etc/xdg/lxsession/LXDE-pi/autostart "$lx" 2>/dev/null || touch "$lx"
     grep -qF "$line" "$lx" || echo "@$line" >> "$lx"
   fi
-  # Boot straight to the desktop, logged in.
+  sudo systemctl disable --quiet panel-kiosk 2>/dev/null || true
   have raspi-config && sudo raspi-config nonint do_boot_behaviour B4 || true
 }
 
 setup_cage_kiosk() {
-  # Raspberry Pi OS Lite: no desktop, so run the browser in cage, a
-  # minimal single-app Wayland compositor, straight from boot.
   sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq cage >/dev/null
   sudo tee /etc/systemd/system/panel-kiosk.service >/dev/null <<EOF
 [Unit]
 Description=Panel display (kiosk)
-After=panel.service systemd-user-sessions.service plymouth-quit-wait.service
+After=panel.service systemd-user-sessions.service plymouth-quit-wait.service systemd-logind.service
 Wants=panel.service
 Conflicts=getty@tty1.service
 
@@ -253,18 +296,23 @@ Restart=always
 RestartSec=3
 
 [Install]
-WantedBy=graphical.target
+WantedBy=multi-user.target
 EOF
+  # Boot to the kiosk, not the desktop. The desktop stays installed:
+  # `panel desktop` starts it on demand.
+  have raspi-config && sudo raspi-config nonint do_boot_behaviour B1 >/dev/null 2>&1 || true
+  sudo systemctl set-default multi-user.target >/dev/null
   sudo systemctl daemon-reload
-  sudo systemctl set-default graphical.target >/dev/null
   sudo systemctl enable --quiet panel-kiosk
 }
+
+KIOSK_MODE="${PANEL_KIOSK_MODE:-kiosk}"
 
 if [ "$KIOSK" != "no" ]; then
   has_desktop=no
   { have labwc || have wayfire || have startlxde-pi || [ -d /etc/xdg/lxsession/LXDE-pi ]; } && has_desktop=yes
   if [ "$KIOSK" = "auto" ] && [ "$has_desktop" = "no" ] && [ -z "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ] && ! have raspi-config; then
-    warn "No desktop found and this doesn't look like a Pi, so skipping the full-screen display."
+    warn "This doesn't look like a Pi with a screen, so skipping the full-screen display."
     warn "Open http://localhost:$PORT/display in a browser, or rerun with PANEL_KIOSK=yes."
   else
     step "Setting up the full-screen display"
@@ -275,12 +323,14 @@ if [ "$KIOSK" != "no" ]; then
         sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq chromium-browser >/dev/null
       fi
     fi
-    if [ "$has_desktop" = "yes" ]; then
+    if [ "$KIOSK_MODE" = "desktop" ]; then
       setup_desktop_autostart
-      info "Opens automatically when the desktop starts"
+      info "Opens when the desktop starts (desktop pop-ups can appear over it)"
     else
+      remove_desktop_autostart
       setup_cage_kiosk
-      info "Opens automatically on boot (no desktop needed)"
+      info "Opens full-screen on boot, with nothing else on the screen"
+      [ "$has_desktop" = "yes" ] && info "Need the desktop? Run: panel desktop"
     fi
     # Keep the screen awake.
     have raspi-config && sudo raspi-config nonint do_blanking 1 >/dev/null 2>&1 || true

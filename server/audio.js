@@ -315,6 +315,12 @@ general = {
   name = "${name}";
   output_backend = "${backend}";
   volume_range_db = 50;
+  interpolation = "basic";
+  // Bluetooth timing wobbles. Don't let that trigger a resync, which cuts the
+  // music out, and keep a bigger buffer so a Wi-Fi hiccup can't empty it.
+  resync_threshold_in_seconds = 0;
+  drift_tolerance_in_seconds = 0.05;
+  audio_backend_buffer_desired_length_in_seconds = 0.5;
 };
 sessioncontrol = {
   session_timeout = 20;
@@ -370,6 +376,7 @@ alsa = { output_device = "default"; };
       state.airplay.error = err.message;
     }
     publish();
+    onNowPlaying(nowPlaying());
   }
 
   function stopAirplay() {
@@ -403,7 +410,7 @@ alsa = { output_device = "default"; };
       title: np.title, artist: np.artist, album: np.album, source: np.source,
       artUrl: np.art ? `/api/audio/art?v=${np.artVersion}` : null,
       duration: np.duration, position: np.position, positionAt: np.positionAt,
-      airplay: { enabled: state.airplay.enabled, name: state.airplay.name || store.settings.name },
+      airplay: { available: caps.airplay, enabled: settings().airplay !== false, name: state.airplay.name || store.settings.name },
     };
   }
 
