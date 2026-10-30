@@ -23,6 +23,7 @@ import { createPhotos } from './photos.js';
 import { loadGallery, resolveRecipe, shareRecipe } from './gallery.js';
 import { createUpdater } from './updater.js';
 import { createAudio } from './audio.js';
+import { createDisplayPower } from './display.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WEB = path.join(ROOT, 'web');
@@ -54,6 +55,9 @@ const updater = createUpdater({
   autoUpdateEnabled: () => !!store.settings.autoUpdate,
   // Install automatic updates between 3 and 6 AM, panel time.
   isQuietHour: () => { const h = tzParts(new Date(), store.settings.timezone).h; return h >= 3 && h < 6; },
+});
+const displayPower = createDisplayPower({
+  onChange: (on) => hub.send('display:power', { on }),
 });
 
 // ---------------------------------------------------------------- serializers
@@ -135,6 +139,7 @@ async function snapshot() {
     widgets: store.config.widgets.filter((w) => !w.draft).map(publicWidget),
     focus: focus.current,
     system: sys,
+    displayPower: displayPower.on,
     pairing: p ? {
       code: p.code,
       expires: Number.isFinite(p.expires) ? p.expires : null,
@@ -341,6 +346,7 @@ route('GET', '/api/admin/bootstrap', (req) => {
     system: { ...system(), displaySize, dataDir: DATA_DIR, managed: !!process.env.INVOCATION_ID, local: isLocal(req) },
     update: updater.state,
     focus: focus.current,
+    displayPower: displayPower.on,
   };
 });
 
@@ -594,6 +600,35 @@ route('POST', '/api/display/reload', () => {
   return { ok: true };
 });
 
+route('GET', '/api/display/power', () => ({ ok: true, on: displayPower.on, power: displayPower.on }), { open: true });
+
+route('POST', '/api/display/power', async (req) => {
+  const b = await readBody(req);
+  let target;
+  if (b.power === 'toggle' || b.action === 'toggle' || b.toggle) {
+    target = !displayPower.on;
+  } else {
+    target = b.power !== undefined ? !!b.power : (b.on !== undefined ? !!b.on : false);
+  }
+  const on = await displayPower.set(target);
+  return { ok: true, on, power: on };
+}, { open: true });
+
+route('POST', '/api/display/off', async () => {
+  const on = await displayPower.set(false);
+  return { ok: true, on, power: on };
+}, { open: true });
+
+route('POST', '/api/display/on', async () => {
+  const on = await displayPower.set(true);
+  return { ok: true, on, power: on };
+}, { open: true });
+
+route('POST', '/api/display/toggle', async () => {
+  const on = await displayPower.toggle();
+  return { ok: true, on, power: on };
+}, { open: true });
+
 // Sound
 
 const MAC_PARAM = /^[0-9A-F]{2}(:[0-9A-F]{2}){5}$/i;
@@ -673,21 +708,92 @@ route('POST', '/api/system/restart', () => {
 
 // ---------------------------------------------------------------- server
 
+function powerHtml({ on, sys }) {
+  const name = sys?.hostname || 'Panel';
+  const url = sys?.urls?.name || 'http://panel.local';
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f3f3f1" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b0b0b" media="(prefers-color-scheme: dark)">
+  <title>Display is ${on ? 'on' : 'off'} · ${name}</title>
+  <link rel="icon" href="/favicon.svg">
+  <link rel="stylesheet" href="/assets/base.css">
+  <link rel="stylesheet" href="/assets/manage.css">
+  <style>
+    body { display: grid; place-items: center; min-height: 100vh; padding: 24px; margin: 0; background: var(--bg); }
+    .power-card { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 36px 28px; width: 100%; max-width: 360px; text-align: center; box-shadow: 0 4px 24px rgba(0,0,0,.04); }
+    .power-icon { width: 56px; height: 56px; border-radius: 50%; background: var(--fill); display: grid; place-items: center; margin: 0 auto 20px; color: var(--ink); }
+    .power-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 24px; }
+  </style>
+</head>
+<body>
+  <div class="power-card">
+    <div class="brand" style="justify-content: center; margin-bottom: 24px;"><span class="brand-mark"></span>Panel</div>
+    <div class="power-icon">
+      ${on
+        ? '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/></svg>'
+        : '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8.5 20h7M12 16.5V20"/><line x1="2" y1="2" x2="22" y2="22"/></svg>'
+      }
+    </div>
+    <h1 style="font-size: 21px; font-weight: 600; margin: 0 0 8px;">Display is ${on ? 'on' : 'off'}</h1>
+    <p class="lede" style="font-size: 14.5px; color: var(--ink-2); margin: 0 auto;">The screen on your Panel is now ${on ? 'turned on' : 'turned off'}.</p>
+    <div class="power-actions">
+      <a href="${on ? '/off' : '/on'}" class="btn primary" style="justify-content: center; text-decoration: none;">Turn display ${on ? 'off' : 'on'}</a>
+      <a href="/" class="btn ghost" style="justify-content: center; text-decoration: none;">Open Panel</a>
+    </div>
+    <p class="small muted" style="margin-top: 24px;">Turn off anytime: <code style="padding: 2px 6px; background: var(--fill); border-radius: 4px;">${url}/off</code></p>
+  </div>
+</body>
+</html>`;
+}
+
+const OFF_PATHS = new Set(['/off', '/display/off', '/screen/off']);
+const ON_PATHS = new Set(['/on', '/display/on', '/screen/on']);
+const TOGGLE_PATHS = new Set(['/toggle', '/display/toggle', '/screen/toggle']);
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://panel');
   const p = url.pathname;
 
-  // CORS so webhooks can come from browser-based tools too.
-  if (p.startsWith('/hook/')) {
+  // CORS so webhooks and display control can come from browser-based tools too.
+  if (p.startsWith('/hook/') || OFF_PATHS.has(p) || ON_PATHS.has(p) || TOGGLE_PATHS.has(p) || p.startsWith('/api/display/')) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Panel-Token');
     if (req.method === 'OPTIONS') return send(res, 204, '');
   }
 
   try {
+    // Quick display power routes via URL (e.g. /off, /on, /toggle)
+    if (OFF_PATHS.has(p) || ON_PATHS.has(p) || TOGGLE_PATHS.has(p)) {
+      if (OFF_PATHS.has(p)) await displayPower.set(false);
+      else if (ON_PATHS.has(p)) await displayPower.set(true);
+      else await displayPower.toggle();
+
+      const wantsJson = (req.headers.accept || '').includes('application/json') || req.method === 'POST';
+      if (wantsJson) {
+        return send(res, 200, { ok: true, on: displayPower.on, power: displayPower.on });
+      }
+      return send(res, 200, powerHtml({ on: displayPower.on, sys: system() }), { 'Content-Type': 'text/html; charset=utf-8' });
+    }
+
     if (req.method === 'GET' && !p.startsWith('/api/')) {
-      if (p === '/display') return serveFile(res, 'display.html');
-      if (p === '/' || p === '/manage') return serveFile(res, 'manage.html');
+      if (p === '/display') {
+        const qp = url.searchParams.get('power') || url.searchParams.get('display');
+        if (qp === 'off') await displayPower.set(false);
+        else if (qp === 'on') await displayPower.set(true);
+        else if (qp === 'toggle') await displayPower.toggle();
+        return serveFile(res, 'display.html');
+      }
+      if (p === '/' || p === '/manage') {
+        const qp = url.searchParams.get('power') || url.searchParams.get('display');
+        if (qp === 'off') await displayPower.set(false);
+        else if (qp === 'on') await displayPower.set(true);
+        else if (qp === 'toggle') await displayPower.toggle();
+        return serveFile(res, 'manage.html');
+      }
       if (p.startsWith('/assets/')) return serveFile(res, p.slice(1));
       if (p === '/favicon.svg' || p === '/favicon.ico') return serveFile(res, 'assets/favicon.svg');
       if (p === '/health') return send(res, 200, 'ok');

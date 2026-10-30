@@ -3,6 +3,8 @@
 
 body.display { overflow: hidden; cursor: none; user-select: none; }
 body.display.preview { cursor: default; }
+body.display.screen-off { background: #000 !important; }
+body.display.screen-off > * { display: none !important; }
 
 :root { --pad: 2.4vh; --gap: 1.6vh; --radius: 2.2vh; }
 

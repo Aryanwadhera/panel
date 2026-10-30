@@ -144,6 +144,14 @@ Open **http://panel.local** on any paired phone or laptop.
 
 **Reset.** Settings → Reset erases every widget, photo and setting, your AI key and all paired phones, then returns to first-time setup. You type `reset` to confirm. `panel reset` on the Pi does the same.
 
+### Turning off the display
+
+You can turn off HDMI display output on demand from anywhere on your network:
+
+- **Quick URL:** open **http://panel.local/off** in Safari, Chrome or an iOS Shortcut to turn off the screen immediately. Open **http://panel.local/on** to turn it back on, or **/toggle** to toggle it.
+- **In the manage app:** tap **Turn off screen** next to the preview on the Screen tab, or use the **Display output** toggle in Settings.
+- **From the terminal:** run `panel off` or `panel on` on the Pi.
+
 ### Focus mode
 
 Focus mode fills the screen for a moment, then gets out of the way. It's on by default. It shows:
@@ -434,6 +442,8 @@ panel status      Is it running, and where to manage it
 panel pair        Show a pairing code in the terminal (handy if the screen is off)
 panel logs        Follow the server log
 panel reload      Reload what's on the screen
+panel off         Turn off the screen (HDMI output)
+panel on          Turn on the screen (HDMI output)
 panel desktop     Show the Pi's desktop instead of the panel (until reboot)
 panel kiosk       Put the panel back on screen
 panel restart     Restart the server
@@ -654,6 +664,9 @@ Everything the manage page does goes through a small JSON API. Requests need a p
 | `POST` | `/api/system/check-update` | Check now |
 | `POST` | `/api/system/update` | Install (progress arrives as `update` events) |
 | `POST` | `/api/system/restart` · `/api/display/reload` | Restart the server · reload the screen |
+| `GET` / `POST` | `/off` · `/on` · `/toggle` | *Public.* Quick display power control via URL (also `/display/off`, `/display/on`) |
+| `GET` / `POST` | `/api/display/power` | *Public.* Display output power status and toggle (`{on: boolean}`) |
+| `POST` | `/api/display/off` · `/api/display/on` · `/api/display/toggle` | *Public.* Turn display output off, on, or toggle |
 | `DELETE` | `/api/sessions/:id` | Disconnect a device |
 
 ## Contributing

@@ -59,6 +59,7 @@ step "Installing system packages"
 sudo apt-get update -qq
 PKGS=(git curl ca-certificates avahi-daemon)
 apt-cache show fonts-inter >/dev/null 2>&1 && PKGS+=(fonts-inter)
+apt-cache show wlr-randr >/dev/null 2>&1 && PKGS+=(wlr-randr)
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${PKGS[@]}" >/dev/null
 info "git, curl, avahi (for panel.local), Inter font"
 

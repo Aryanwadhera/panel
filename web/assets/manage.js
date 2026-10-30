@@ -117,6 +117,7 @@ const I = {
   mute: '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="m16 9.5 5 5M21 9.5l-5 5"/>',
   photos: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="9.5" r="1.6"/><path d="m4 17 5-4.5 3.5 3 3-2.5 4.5 4"/>',
   screen: '<rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8.5 20h7M12 16.5V20"/>',
+  screenOff: '<rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8.5 20h7M12 16.5V20"/><line x1="2" y1="2" x2="22" y2="22"/>',
   gallery: '<rect x="3.5" y="3.5" width="7" height="7" rx="1.8"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.8"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.8"/><path d="M17 14v6M14 17h6"/>',
   settings: '<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
   share: '<path d="M12 15V4M8 7.5 12 3.5l4 4"/><path d="M6 11.5H5a1.5 1.5 0 0 0-1.5 1.5v6A1.5 1.5 0 0 0 5 20.5h14a1.5 1.5 0 0 0 1.5-1.5v-6a1.5 1.5 0 0 0-1.5-1.5h-1"/>',
@@ -536,7 +537,8 @@ function openEvents(onChange) {
   events.addEventListener('error', () => onChange('off'));
   events.addEventListener('widget', (e) => { const w = JSON.parse(e.data); if (w) { merge(w); onChange('data', w.id); } });
   const setFocus = (f) => { B.focus = f; for (const fn of [...focusListeners]) fn(f); };
-  events.addEventListener('state', (e) => { const s = JSON.parse(e.data); s.widgets.forEach(merge); setFocus(s.focus); onChange('data'); });
+  events.addEventListener('display:power', (e) => { const d = JSON.parse(e.data); setPower(d.on); });
+  events.addEventListener('state', (e) => { const s = JSON.parse(e.data); s.widgets.forEach(merge); setFocus(s.focus); if (s.displayPower !== undefined) setPower(s.displayPower); onChange('data'); });
   events.addEventListener('focus', (e) => setFocus(JSON.parse(e.data)));
   events.addEventListener('update', (e) => setUpdate(JSON.parse(e.data)));
   events.addEventListener('audio', (e) => { const a = JSON.parse(e.data); for (const fn of [...audioListeners]) fn(a); });
@@ -549,6 +551,11 @@ function closeEvents() {
 const SECTIONS = [['layout', 'Screen', 'screen'], ['gallery', 'Gallery', 'gallery'], ['sound', 'Sound', 'speaker'], ['settings', 'Settings', 'settings']];
 let goTab = () => {};
 const focusListeners = new Set();
+const powerListeners = new Set();
+const setPower = (on) => {
+  B.displayPower = on;
+  for (const fn of [...powerListeners]) fn(on);
+};
 
 function focusBar() {
   const el = h('div', { class: 'update', hidden: true });
@@ -642,10 +649,26 @@ function layoutTab() {
 
   const reload = h('button', { class: 'btn ghost small', onclick: () => busy(reload, async () => { await api('POST', '/api/display/reload'); toast('Screen reloaded'); }) }, icon('refresh'), 'Reload screen');
 
+  const powerBtn = h('button', { class: 'btn ghost small' });
+  const drawPowerBtn = () => {
+    const on = B.displayPower !== false;
+    powerBtn.replaceChildren(icon(on ? 'screenOff' : 'screen'), on ? 'Turn off screen' : 'Turn on screen');
+  };
+  powerBtn.onclick = () => busy(powerBtn, async () => {
+    const next = B.displayPower === false;
+    await api('POST', '/api/display/power', { on: next });
+    setPower(next);
+    toast(next ? 'Screen turned on' : 'Screen turned off');
+  });
+  powerListeners.add(drawPowerBtn);
+  drawPowerBtn();
+
   return h('div', { class: 'layout' },
     h('div', { class: 'sticky' },
       preview(),
-      h('div', { class: 'preview-cap' }, h('span', {}, `${B.settings.grid.cols} × ${B.settings.grid.rows} grid`), reload)),
+      h('div', { class: 'preview-cap' },
+        h('span', {}, `${B.settings.grid.cols} × ${B.settings.grid.rows} grid`),
+        h('div', { style: { display: 'flex', gap: '4px' } }, powerBtn, reload))),
     h('div', {},
       h('div', { class: 'group-h' }, h('h2', {}, 'Widgets'), h('button', { class: 'btn primary small', onclick: () => goTab('gallery') }, icon('plus'), 'Add')),
       list,
@@ -1571,6 +1594,17 @@ function settingsTab() {
     field('Dark from', h('input', { class: 'input', type: 'time', value: s.nightStart, onchange: (e) => save({ nightStart: e.target.value }) })),
     field('Until', h('input', { class: 'input', type: 'time', value: s.nightEnd, onchange: (e) => save({ nightEnd: e.target.value }) })));
 
+  const offUrl = `${location.origin}/off`;
+  const powerToggle = toggle('Display output', B.displayPower !== false, async (v) => {
+    await api('POST', '/api/display/power', { on: v });
+    setPower(v);
+    toast(v ? 'Screen turned on' : 'Screen turned off');
+  });
+  powerListeners.add((on) => {
+    const input = powerToggle.querySelector('input');
+    if (input && input.checked !== on) input.checked = on;
+  });
+
   // AI
   const ai = { apiKey: s.ai.apiKey, model: s.ai.model };
   const keyInput = h('input', { class: 'input mono', type: 'password', placeholder: s.ai.apiKey ? `Saved (${s.ai.apiKey}). Paste to replace.` : 'sk-or-v1-…', autocomplete: 'off', spellcheck: 'false', oninput: () => { ai.apiKey = keyInput.value.trim() || s.ai.apiKey; } });
@@ -1601,6 +1635,13 @@ function settingsTab() {
 
     h('div', { class: 'group-h' }, h('h2', {}, 'Screen')),
     h('div', { class: 'panel panel-pad fields' },
+      h('div', {},
+        powerToggle,
+        h('p', { class: 'help small muted' }, 'Turn off HDMI display output when not in use.')),
+      field('Quick turn off URL', h('div', { class: 'copy' },
+        h('code', {}, offUrl),
+        h('button', { class: 'btn ghost icon', 'aria-label': 'Copy URL', onclick: () => copy(offUrl) }, icon('copy'))),
+        'Open or bookmark this URL to quickly turn off the display from your phone, laptop, or iOS Shortcuts. Use /on to turn it back on.'),
       field('Appearance', seg([{ value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }, { value: 'auto', label: 'Dark at night' }], s.theme, (v) => {
         nightRow.hidden = v !== 'auto';
         saveSettings({ theme: v });

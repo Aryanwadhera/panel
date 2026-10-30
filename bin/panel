@@ -53,6 +53,20 @@ case "${1:-help}" in
     sudo systemctl start panel-kiosk
     echo "The panel is back on screen."
     ;;
+  off|screen-off|display-off)
+    curl -fs -X POST "$BASE/api/display/off" >/dev/null && echo "Display output turned off."
+    ;;
+  on|screen-on|display-on)
+    curl -fs -X POST "$BASE/api/display/on" >/dev/null && echo "Display output turned on."
+    ;;
+  toggle|screen-toggle)
+    res="$(curl -fs -X POST "$BASE/api/display/toggle")"
+    if echo "$res" | grep -q '"on":true'; then
+      echo "Display output turned on."
+    else
+      echo "Display output turned off."
+    fi
+    ;;
   reload)
     curl -fs -X POST "$BASE/api/display/reload" >/dev/null && echo "Told the screen to reload."
     ;;
@@ -125,6 +139,8 @@ ${bold}panel${reset}: manage your Panel
   panel pair        Show a code to connect a phone or laptop
   panel logs        Follow the server log
   panel reload      Reload what's on the screen
+  panel off         Turn off the screen
+  panel on          Turn on the screen
   panel desktop     Show the Pi's desktop instead of the panel (until reboot)
   panel kiosk       Put the panel back on screen
   panel restart     Restart the server

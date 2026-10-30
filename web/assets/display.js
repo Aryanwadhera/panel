@@ -532,9 +532,15 @@ function applyTheme() {
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
 }
 
+function renderPower() {
+  const isOff = S && S.displayPower === false;
+  document.body.classList.toggle('screen-off', isOff);
+}
+
 function render() {
   if (!S) return;
   applyTheme();
+  renderPower();
   document.title = S.settings.name || 'Panel';
   const showWelcome = !S.setupComplete || (!S.widgets.length && !PREVIEW);
   if (showWelcome) {
@@ -566,6 +572,10 @@ function connect() {
   const conn = $('#conn');
   es.addEventListener('open', () => { clearTimeout(downTimer); conn.hidden = true; });
   es.addEventListener('state', (e) => setState(JSON.parse(e.data)));
+  es.addEventListener('display:power', (e) => {
+    const p = JSON.parse(e.data);
+    if (S) { S.displayPower = p.on; renderPower(); }
+  });
   es.addEventListener('widget', (e) => {
     const w = JSON.parse(e.data);
     if (!S || !w) return;
