@@ -12,11 +12,13 @@ import { createAuth, isLocal } from './auth.js';
 import { Scheduler } from './scheduler.js';
 import { types, catalog, defaultConfig, viewOf } from './widgets/index.js';
 import { buildPrompt } from './widgets/summary.js';
+import { previewApi } from './widgets/api.js';
 import { SAMPLES } from './lib/views.js';
 import { HttpError, VERSION, fetchJson } from './lib/http.js';
 import { isValidTimeZone, tzParts } from './lib/time.js';
 import { complete, listModels } from './lib/openrouter.js';
 import { createUpdater } from './updater.js';
+import { createAudio } from './audio.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WEB = path.join(ROOT, 'web');
@@ -30,6 +32,15 @@ const hub = createHub();
 const auth = createAuth(store, () => broadcastState());
 const scheduler = new Scheduler(store, (id) => hub.send('widget', publicWidget(store.widget(id))));
 let displaySize = null;
+const audio = createAudio({
+  store,
+  dataDir: DATA_DIR,
+  onChange: (s) => hub.send('audio', s),
+  onNowPlaying: () => {
+    for (const w of store.config.widgets) if (w.type === 'nowplaying') hub.send('widget', publicWidget(w));
+  },
+});
+scheduler.liveData = () => audio.nowPlaying();
 const updater = createUpdater({
   root: ROOT,
   onChange: (u) => hub.send('update', u),
@@ -82,7 +93,7 @@ function publicWidget(w) {
     id: w.id, type: w.type, view: viewOf(w),
     title: w.title, w: w.w, h: w.h,
     props: def?.display?.(w.config || {}) ?? {},
-    data: st.data ?? null,
+    data: def?.live ? audio.nowPlaying() : st.data ?? null,
     updatedAt: st.updatedAt ?? null,
     error: st.error ?? null,
   };
@@ -113,7 +124,7 @@ async function snapshot() {
     bootId: BOOT_ID,
     setupComplete: store.config.setupComplete,
     settings: publicSettings(),
-    widgets: store.config.widgets.map(publicWidget),
+    widgets: store.config.widgets.filter((w) => !w.draft).map(publicWidget),
     system: sys,
     pairing: p ? {
       code: p.code,
@@ -308,7 +319,7 @@ route('GET', '/api/admin/bootstrap', (req) => {
   return {
     setupComplete: store.config.setupComplete,
     settings: { ...publicSettings(), location: s.location, autoUpdate: !!s.autoUpdate, ai: { apiKey: masked(s.ai.apiKey), model: s.ai.model } },
-    widgets: store.config.widgets.map(adminWidget),
+    widgets: store.config.widgets.filter((w) => !w.draft).map(adminWidget),
     catalog: catalog(),
     samples: SAMPLES,
     sessions: store.config.sessions.map((x) => ({ id: x.id, name: x.name, createdAt: x.createdAt, lastSeen: x.lastSeen, current: x === me })),
@@ -322,6 +333,7 @@ route('PUT', '/api/settings', async (req) => {
   const s = store.settings;
   let refetch = false;
   if (b.name !== undefined) s.name = String(b.name).trim().slice(0, 40) || 'Panel';
+  if (b.name !== undefined) audio.nameChanged();
   if (b.timezone !== undefined) {
     if (!isValidTimeZone(b.timezone)) throw new HttpError(400, 'Unknown time zone');
     refetch ||= s.timezone !== b.timezone;
@@ -372,11 +384,14 @@ route('POST', '/api/widgets', async (req) => {
     ...size,
     config: cleanConfig(def.type, b.config, defaultConfig(def.type)),
     token: rid(18),
+    // Widgets added from the gallery stay hidden until saved, so an editor
+    // closed halfway (or a phone that went to sleep) leaves nothing behind.
+    ...(b.draft ? { draft: true, createdAt: Date.now() } : {}),
   };
   store.config.widgets.push(w);
   if (b.data && def.ingest) store.setData(w.id, { data: def.ingest(b.data, null, w.config), updatedAt: new Date().toISOString() });
   changed();
-  scheduler.run(w);
+  if (!w.draft) scheduler.run(w);
   return adminWidget(w);
 });
 
@@ -392,6 +407,8 @@ route('PUT', '/api/widgets/order', async (req) => {
 route('PUT', '/api/widgets/:id', async (req, res, { id }) => {
   const w = findWidget(id);
   const b = await readBody(req);
+  const publishing = !!(b.publish && w.draft);
+  if (publishing) delete w.draft;
   if (b.title !== undefined) w.title = String(b.title).trim().slice(0, 60) || types[w.type].name;
   if (b.w !== undefined || b.h !== undefined) Object.assign(w, clampSize(b.w ?? w.w, b.h ?? w.h));
   if (b.config) {
@@ -404,6 +421,7 @@ route('PUT', '/api/widgets/:id', async (req, res, { id }) => {
       scheduler.run(w);
     }
   }
+  if (publishing && !scheduler.running.has(id)) scheduler.run(w);
   changed();
   return adminWidget(w);
 });
@@ -432,6 +450,19 @@ route('POST', '/api/widgets/:id/action', async (req, res, { id }) => {
   store.setData(id, { data, updatedAt: new Date().toISOString(), error: null });
   hub.send('widget', publicWidget(w));
   return adminWidget(w);
+});
+
+// Try an API widget's request with unsaved settings, for the field picker.
+route('POST', '/api/widgets/:id/preview', async (req, res, { id }) => {
+  const w = findWidget(id);
+  if (w.type !== 'api') throw new HttpError(400, 'Only API widgets can be previewed');
+  const b = await readBody(req);
+  const config = cleanConfig('api', b.config || {}, w.config); // masked secrets fall back to the saved ones
+  try {
+    return await previewApi(id, config, store.settings, { reuse: !!b.reuse });
+  } catch (err) {
+    return { ok: false, error: err.message, meta: null, body: null, mapped: null };
+  }
 });
 
 route('POST', '/api/widgets/:id/token', (req, res, { id }) => {
@@ -481,6 +512,49 @@ route('POST', '/api/ai/test', async (req) => {
 route('POST', '/api/display/reload', () => {
   hub.send('reload');
   return { ok: true };
+});
+
+// Sound
+
+const MAC_PARAM = /^[0-9A-F]{2}(:[0-9A-F]{2}){5}$/i;
+const audioCall = async (fn) => {
+  try { await fn(); } catch (err) { throw new HttpError(400, err.message); }
+  return audio.state;
+};
+
+route('GET', '/api/audio', () => audio.refresh());
+
+route('PUT', '/api/audio/output', async (req) => {
+  const { name } = await readBody(req);
+  return audioCall(() => audio.setOutput(String(name)));
+});
+
+route('PUT', '/api/audio/volume', async (req) => {
+  const { volume, muted } = await readBody(req);
+  return audioCall(() => audio.setVolume({ volume: volume == null ? null : +volume, muted: muted == null ? null : !!muted }));
+});
+
+route('POST', '/api/audio/test', () => audioCall(() => audio.testSound()));
+
+route('POST', '/api/audio/bluetooth/scan', () => audioCall(() => audio.scan()));
+
+route('POST', '/api/audio/bluetooth/:mac/:action', async (req, res, { mac, action }) => {
+  if (!MAC_PARAM.test(mac)) throw new HttpError(400, 'Not a Bluetooth address');
+  const fn = { pair: audio.pair, connect: audio.connect, disconnect: audio.disconnect, forget: audio.forget }[action];
+  if (!fn) throw new HttpError(404, 'Unknown action');
+  return audioCall(() => fn(mac.toUpperCase()));
+});
+
+route('PUT', '/api/audio/airplay', async (req) => {
+  const { enabled } = await readBody(req);
+  return audio.setAirplay(!!enabled);
+});
+
+route('GET', '/api/audio/art', (req, res) => {
+  const art = audio.art();
+  if (!art) return send(res, 404, 'No artwork');
+  res.writeHead(200, { ...SECURITY_HEADERS, 'Content-Type': art.type, 'Cache-Control': 'private, max-age=86400' });
+  res.end(art.body);
 });
 
 // System
@@ -552,10 +626,21 @@ server.listen(PORT, HOST, () => {
   console.log(`  Data     ${DATA_DIR}`);
   scheduler.start();
   updater.start();
+  // Forget drafts nobody finished setting up.
+  setInterval(() => {
+    const stale = store.config.widgets.filter((w) => w.draft && Date.now() - (w.createdAt || 0) > 30 * 60e3);
+    if (!stale.length) return;
+    store.config.widgets = store.config.widgets.filter((w) => !stale.includes(w));
+    for (const w of stale) delete store.state[w.id];
+    store.saveConfig();
+    store.saveState();
+  }, 5 * 60e3).unref();
+  audio.start().catch((err) => console.warn(`[audio] ${err.message}`));
 });
 
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {
+    audio.stop();
     store.flush();
     process.exit(0);
   });

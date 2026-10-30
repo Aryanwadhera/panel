@@ -248,6 +248,35 @@ const R = {
     };
   },
 
+  nowplaying(w) {
+    const d = w.data || { state: 'idle', airplay: {} };
+    const note = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V5.5l11-2V16"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></svg>';
+    const art = `<div class="np-art">${d.artUrl ? `<img src="${esc(d.artUrl)}" alt="">` : note}</div>`;
+    if (d.state === 'idle' || !d.title) {
+      const name = d.airplay?.name || S.settings.name;
+      return {
+        bare: true,
+        body: `<div class="np idle">${art}<div class="np-info">
+          <div class="np-label">Now playing</div>
+          <div class="np-title">Nothing playing</div>
+          <div class="np-artist">${d.airplay?.enabled === false ? 'AirPlay is turned off in Sound settings.' : `AirPlay to “${esc(name)}” from your iPhone or Mac.`}</div>
+        </div></div>`,
+      };
+    }
+    const label = d.state === 'paused' ? 'Paused' : `Playing${d.source ? ` from ${esc(d.source)}` : ''}`;
+    const progress = d.duration ? `<div class="np-progress" data-np-pos="${d.position ?? 0}" data-np-at="${d.positionAt ?? Date.now()}" data-np-dur="${d.duration}" data-np-playing="${d.state === 'playing' ? 1 : 0}">${progressInner(d.position ?? 0, d.positionAt, d.duration, d.state === 'playing')}</div>` : '';
+    return {
+      bare: true,
+      body: `<div class="np ${d.state}">${art}<div class="np-info">
+        <div class="np-label">${d.state === 'playing' ? '<span class="eq"><i></i><i></i><i></i></span>' : ''}${label}</div>
+        <div class="np-title">${esc(d.title)}</div>
+        ${d.artist ? `<div class="np-artist">${esc(d.artist)}</div>` : ''}
+        ${d.album ? `<div class="np-album">${esc(d.album)}</div>` : ''}
+        ${progress}
+      </div></div>`,
+    };
+  },
+
   countdown(w) {
     const { label, date } = w.props;
     if (!date) return empty('No date set');
@@ -262,6 +291,12 @@ const R = {
 function waiting(w, title = 'Waiting for data') {
   if (w.error) return empty('Couldn’t update', w.error);
   return empty(title, w.type === 'webhook' ? 'Send a webhook to fill this in.' : 'Loading…');
+}
+
+const mmss = (sec) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
+function progressInner(pos, at, dur, playing) {
+  const now = Math.min(dur, Math.max(0, pos + (playing && at ? (Date.now() - at) / 1000 : 0)));
+  return `<div class="bar"><i style="width:${(now / dur) * 100}%"></i></div><div class="np-times"><span>${mmss(now)}</span><span>-${mmss(dur - now)}</span></div>`;
 }
 
 function clockText(now, secs) {
@@ -460,6 +495,9 @@ setInterval(() => {
   if (!S) return;
   const now = new Date();
   for (const el of document.querySelectorAll('[data-clock]')) el.innerHTML = clockText(now, el.dataset.clock === 's');
+  for (const el of document.querySelectorAll('[data-np-pos]')) {
+    if (el.dataset.npPlaying === '1') el.innerHTML = progressInner(+el.dataset.npPos, +el.dataset.npAt, +el.dataset.npDur, true);
+  }
   if (S.pairing?.expires) renderOverlay();
 }, 1000);
 setInterval(() => { for (const el of document.querySelectorAll('.card')) el._html = null; render(); }, 60e3);

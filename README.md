@@ -5,7 +5,7 @@
 # Panel
 
 **A calm, glanceable dashboard for a Raspberry Pi and a spare screen.**<br>
-Calendar, tasks, weather, your own apps' data, and an AI-written brief of your day.<br>
+Calendar, tasks, weather, your own apps' data, an AI-written brief of your day,<br>and an AirPlay speaker for your music.<br>
 Set it up and manage it from your phone.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-111111.svg)](LICENSE)
@@ -29,6 +29,8 @@ Set it up and manage it from your phone.
 - [Managing your panel](#managing-your-panel)
 - [Widgets](#widgets)
 - [Webhooks: send your own data](#webhooks-send-your-own-data)
+- [APIs: pull your own data](#apis-pull-your-own-data)
+- [Sound and AirPlay](#sound-and-airplay)
 - [The daily brief](#the-daily-brief)
 - [Updates](#updates)
 - [Security and privacy](#security-and-privacy)
@@ -50,7 +52,8 @@ Most dashboards are built for a desk. Panel is built for a wall, a kitchen count
 - **One command to install.** Run it on the Pi and reboot. The screen walks you through the rest.
 - **No accounts, no cloud.** Scan a QR code on the screen, type the 6-digit code, and your phone is connected. Everything runs on the Pi.
 - **Prebuilt widgets** for the things people actually glance at: clock, weather, calendar, tasks, headlines, uptime, countdowns and notes.
-- **Your own data with one URL.** Every webhook widget gets its own address. Send it a number, list, event, message or progress value and the screen updates instantly.
+- **Your own data, pushed or pulled.** Every webhook widget gets its own address: send it a number, list, event, message or progress value and the screen updates instantly. Or point an API widget at any service, pick a template or tap the values you want, and Panel keeps it fresh.
+- **A speaker for your music.** Connect a Bluetooth, USB or headphone-jack speaker, then AirPlay from your iPhone or Mac. The screen shows what's playing with album art.
 - **A daily brief.** Panel reads everything on the screen and asks your choice of AI model (via [OpenRouter](https://openrouter.ai)) for a few calm sentences about your day.
 - **Updates from the dashboard.** When a new version is pushed, the manage page shows what changed and installs it in one tap, with automatic rollback if anything goes wrong.
 - **One design language.** White cards, big type, generous space. Light, dark, or dark at night.
@@ -65,6 +68,7 @@ Most dashboards are built for a desk. Panel is built for a wall, a kitchen count
 | **OS** | Raspberry Pi OS **Bookworm or newer**, Desktop or Lite. Flash it with [Raspberry Pi Imager](https://www.raspberrypi.com/software/) and set up Wi‑Fi there. |
 | **Screen** | Any HDMI monitor or TV. Panel scales to the resolution, from 720p to 4K. |
 | **Network** | The Pi and your phone on the same Wi‑Fi. |
+| **Speaker** | Optional. Any Bluetooth speaker, a USB or USB‑C speaker or sound card, powered speakers on the Pi's headphone jack (Pi 3 and 4), or the monitor's own speakers over HDMI. |
 | **Optional** | An [OpenRouter API key](https://openrouter.ai/keys) for the daily brief. |
 
 Panel also runs on any Linux machine or Mac with Node 18+ (see [Development](#development)).
@@ -82,8 +86,9 @@ It takes a few minutes. The installer:
 1. Installs Node.js, Chromium and the Inter font if they're missing.
 2. Downloads Panel to `~/panel` and runs it as a system service, so it starts on boot and restarts if it crashes.
 3. Offers to rename the Pi to `panel`, so it's reachable at **http://panel.local**.
-4. Sets the screen to open Panel full-screen on boot and turns off screen blanking. On the Desktop edition it uses the desktop's autostart; on Lite it runs a minimal kiosk session called [cage](https://github.com/cage-kiosk/cage).
-5. Asks to reboot.
+4. Sets up sound: PipeWire, Bluetooth audio and an AirPlay receiver.
+5. Sets the screen to open Panel full-screen on boot and turns off screen blanking. On the Desktop edition it uses the desktop's autostart; on Lite it runs a minimal kiosk session called [cage](https://github.com/cage-kiosk/cage).
+6. Asks to reboot.
 
 Running the same command again is safe: it updates an existing install in place.
 
@@ -99,6 +104,7 @@ Set these before `bash`, for example: `curl -fsSL … | PANEL_PORT=8080 bash`
 | `PANEL_DIR` | `~/panel` | Where the code lives |
 | `PANEL_PORT` | `80` | Web port. Falls back to `8080` if 80 is taken |
 | `PANEL_KIOSK` | `auto` | `yes` / `no`: open the display full-screen on boot |
+| `PANEL_AUDIO` | `yes` | `no` skips speakers, Bluetooth audio and AirPlay |
 | `PANEL_HOSTNAME` | (asks) | Rename the device, e.g. `kitchen` → `http://kitchen.local` |
 | `PANEL_REPO` | this repo | Install from a fork |
 | `PANEL_BRANCH` | `main` | Branch to install and follow for updates (e.g. a `beta` channel) |
@@ -128,6 +134,7 @@ Open **http://panel.local** on any paired phone or laptop.
 | Tab | What's there |
 |---|---|
 | **Widgets** | A live preview of the screen, your widgets in order (use the arrows to rearrange), and **Add widget**. Tap a widget to change its title, size, settings and webhook. |
+| **Sound** | Which speaker to use, volume, Bluetooth pairing, and AirPlay. See [Sound and AirPlay](#sound-and-airplay). |
 | **Settings** | Name, time zone, units and location; grid size (up to 6 × 4); light, dark or dark at night; the daily brief's key and model; software updates. |
 | **Devices** | Every phone and laptop you've paired, with a button to disconnect each. |
 
@@ -144,8 +151,9 @@ Open **http://panel.local** on any paired phone or laptop.
 | **Weather** | Now, today's high and low, rain chance, and a forecast when there's room | A city (via [Open-Meteo](https://open-meteo.com), no key) |
 | **Calendar** | Today and the next few days, with the current event marked. Handles repeating events, exceptions and time zones | A private iCal (`.ics`) link |
 | **Tasks** | A to-do list you edit from your phone or by webhook | |
+| **Now playing** | The song playing over AirPlay: album art, artist, progress | AirPlay on (it is by default) |
 | **Webhook** | A number, list, event feed, message or progress bar | Whatever you send it |
-| **Custom API** | The same five styles, filled by polling any JSON URL | A URL (and headers, if needed) |
+| **API** | The same five styles, pulled from any API on a schedule, with templates for GitHub, Stripe, crypto prices, Home Assistant and more | A URL, or a template |
 | **Headlines** | Latest stories from RSS or Atom feeds | Feed URLs |
 | **Uptime** | Up/down and response time for your sites, checked every minute | URLs |
 | **Countdown** | Days until (or since) a date | |
@@ -248,9 +256,9 @@ Use an **Event feed** widget. This needs Panel reachable from the internet; see 
 </details>
 
 <details>
-<summary><b>Polling instead of pushing</b></summary>
+<summary><b>Pulling instead of pushing</b></summary>
 
-If a service has an API but no webhooks, use a **Custom API** widget: give it the URL (and an `Authorization` header if needed), choose a style, map the fields, and pick how often to check.
+If a service has an API but no webhooks, use an **API** widget instead. See [APIs: pull your own data](#apis-pull-your-own-data).
 </details>
 
 ### Receiving webhooks from the internet
@@ -261,6 +269,87 @@ Webhook URLs work on your home network out of the box. Cloud services (Zapier, S
 - [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) with an ingress rule for `/hook/*`.
 
 Panel never treats tunnelled or proxied requests as local, so even if the whole site is reachable, managing it still requires a code from the physical screen.
+
+## APIs: pull your own data
+
+Webhooks need the other service to send data to Panel. An **API** widget works the other way round: Panel calls the service itself, every minute to every six hours, and shows what comes back. Nothing needs to reach your home network, so it works with any service on the internet.
+
+### Start from a template
+
+Add an **API** widget and pick a template. Fill in a blank or two and it's ready:
+
+| Template | Shows | You provide |
+|---|---|---|
+| **GitHub stars** | Stars on a repo, with a trend line | `owner/repo` |
+| **Open pull requests** | Newest open PRs and their authors | `owner/repo` (token for private repos) |
+| **GitHub Actions** | Recent runs with green, red and amber dots | `owner/repo` (token for private repos) |
+| **npm downloads** | Weekly downloads | Package name |
+| **Linear: my issues** | Your open issues | A Linear API key |
+| **Stripe balance** | Available balance, cents converted to dollars | A restricted key with *Balance: read* |
+| **Plausible: visitors now** | People on your site right now | Site and API key |
+| **Crypto price** | Price and 24-hour change (CoinGecko) | Coin and currency |
+| **Exchange rate** | What one unit of a currency buys | Two currency codes |
+| **Air quality** | US AQI where the panel is | Nothing, it uses the panel's location |
+| **Home Assistant sensor** | Any entity's state, e.g. temperature or power | Address, entity ID, long-lived token |
+
+### Or connect any API
+
+<p align="center"><img src="docs/api.png" alt="Testing an API: a connected status line, a preview of the rows that will appear on the panel, and the response with the picked fields tagged" width="420"></p>
+
+1. Paste the **URL**. For an API that needs a POST, such as GraphQL, set the method and a request body.
+2. Choose **Authentication**: a Bearer token, an API key in a header or the URL, or a username and password. Keys are stored only on the panel and are never shown again, even to paired devices. Anything unusual goes in *More options → Extra headers*.
+3. Choose **Show as**: number, list, event feed, text or progress.
+4. Tap **Test request**. You'll see whether it connected, how long it took, and the response as a tree.
+5. **Tap the values you want.** Tap a number to show it, then the change, then a label. For a list, tap the list, then a title and a detail inside one of the rows. The **On the panel** box shows exactly what will appear, and tagged rows in the tree show what each value feeds.
+6. Tap **Add to panel**.
+
+**Tidy the value** with a prefix and suffix (`$`, `%`), a caption, *Multiply by* (for example `0.01` to turn cents into dollars), and decimal places. A numeric change like `2.4` shows as `+2.4` with an up arrow. Add a *Change suffix* of `%` to make it `+2.4%`.
+
+**Status dots.** In a list, set *Item status* to a field like `conclusion` or `state`. Words like `success`, `ok`, `up`, `healthy` and `passed` show green; `failure`, `error`, `down` and `cancelled` red; `pending`, `in_progress` and `degraded` amber.
+
+**Placeholders.** URLs and request bodies can use `{lat}`, `{lon}`, `{city}`, `{timezone}`, `{today}` (YYYY-MM-DD) and `{now}`, filled in from the panel's settings at each request. For example: `https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=uv_index`
+
+**When something's wrong,** the widget says what in plain words: `api.stripe.com responded 401: Invalid API Key provided. Check the API key and auth settings.` or `Nothing at "data.total" in the response`. It keeps showing the last good value until the API recovers.
+
+## Sound and AirPlay
+
+<p align="center"><img src="docs/nowplaying.png" alt="Now playing card showing album art, the song Holocene by Bon Iver, and a progress bar" width="720"></p>
+
+Panel can be the speaker in the room. Connect a speaker to the Pi, then play to it from your iPhone, iPad or Mac with AirPlay. A **Now playing** widget shows the song, artist and album art on the screen.
+
+<p align="center"><img src="docs/sound.png" alt="The Sound tab: speaker choice, volume, a paired Bluetooth speaker, and AirPlay" width="360"></p>
+
+### Connect a speaker
+
+Open the **Sound** tab on the manage page. Every speaker the Pi can use is listed. Tap one to make it the speaker:
+
+| Speaker | How to connect |
+|---|---|
+| **Bluetooth** | Put the speaker in pairing mode (usually: hold its Bluetooth button until it flashes). In **Sound → Bluetooth**, tap **Find speakers**, then **Pair**. Panel switches to it automatically. |
+| **USB or USB‑C** | Plug in a USB speaker, USB‑C speaker or USB sound card. It appears in the list within a few seconds. Any class-compliant USB audio device works, with no drivers needed. |
+| **Headphone jack** | Plug powered speakers into the Pi's 3.5 mm jack (Pi 3 and 4; the Pi 5 has no jack, so use USB or Bluetooth). |
+| **Monitor speakers** | If your screen has speakers, choose **Screen speakers (HDMI)**. |
+
+Panel remembers your Bluetooth speaker and **reconnects it automatically** whenever it's switched back on, checking about every 45 seconds. Use **Play test sound** to check everything's working, and the slider for the Pi's overall volume.
+
+### Play music with AirPlay
+
+AirPlay is on by default, and the panel shows up under its own name ("Kitchen", for example).
+
+- **iPhone or iPad:** open Control Center, tap the AirPlay icon on the music card, and choose your panel. AirPlay works from Apple Music, Spotify, podcasts, YouTube and anything else with an AirPlay button.
+- **Mac:** click the AirPlay button in Music, or Control Center → Sound → your panel.
+
+Volume follows your phone. Sound comes out of whichever speaker is selected in the Sound tab, and switching speakers mid-song moves the music over. Renaming the panel in Settings renames the AirPlay speaker too. To stop other people on your Wi‑Fi playing to it, turn AirPlay off in the Sound tab.
+
+**Show it on screen:** add a **Now playing** widget (or tap **Show it on the screen** in the Sound tab). At 2×1 it shows the album art beside the song. At 1×1 the art sits on top. When nothing's playing it tells guests how to AirPlay to the panel.
+
+<details>
+<summary><b>About AirPlay 2 and multi-room</b></summary>
+
+<br>
+
+The installer uses the [shairport-sync](https://github.com/mikebrady/shairport-sync) package from Raspberry Pi OS. Depending on the OS version, that build may support only classic AirPlay. Classic AirPlay works from Control Center, Music and apps like Spotify. Grouping the panel with HomePods in the Home app, or playing to several rooms at once, needs AirPlay 2. For that, build shairport-sync with AirPlay 2 support and install its `nqptp` companion, following [their guide](https://github.com/mikebrady/shairport-sync/blob/master/BUILD.md). Panel detects the AirPlay 2 build and uses it automatically.
+</details>
 
 ## The daily brief
 
@@ -304,6 +393,7 @@ To run a beta channel, push to another branch and install test devices with `PAN
 ## Security and privacy
 
 - **Local first.** Panel runs entirely on your Pi. Settings, widget data and paired devices are stored in `~/.panel`, readable only by your user.
+- **AirPlay** lets anyone on your Wi‑Fi play music to the panel, like any AirPlay speaker. Turn it off in the Sound tab if that's not what you want.
 - **What leaves the device:** requests to the services you configure (your calendar, feeds, APIs, sites to check); [Open-Meteo](https://open-meteo.com) for weather and city search; OpenRouter, only if you set up the brief; GitHub, to check for updates. No analytics or telemetry.
 - **Pairing.** Managing the panel requires a code that only appears on its screen, so you have to be able to see it. Codes expire after 5 minutes, and five wrong guesses replace the code with a new one. Paired browsers get a long-lived, HttpOnly cookie, and you can disconnect any of them from **Devices**.
 - **Trusted locally.** Requests from the Pi itself (the kiosk and the `panel` command) don't need pairing. Requests forwarded by a proxy or tunnel are never treated as local.
@@ -358,6 +448,24 @@ Make sure it's the *private/secret iCal* link, not the calendar's web page. Past
 <summary><b>The times or weather are off</b></summary>
 
 Panel uses its own time zone setting (Settings → General), not the Pi's. Check that, plus the city and units.
+</details>
+
+<details>
+<summary><b>No sound, or the speaker list is empty</b></summary>
+
+The Sound tab explains most problems itself. If it says the sound system isn't running, reboot: the installer's changes to sound and Bluetooth take effect after a restart. Check that the right speaker is selected (it has a filled circle), the volume slider is up, and the speaker itself is on and turned up. **Play test sound** confirms the path from Pi to speaker.
+</details>
+
+<details>
+<summary><b>My Bluetooth speaker won't pair or keeps disconnecting</b></summary>
+
+Make sure it's in pairing mode and isn't connected to a phone at the same time: most speakers accept one connection. If it was paired before, tap **Forget**, then **Find speakers** and **Pair** again. Keep it within a few metres of the Pi. On a Pi 3, Wi‑Fi and Bluetooth share a radio, so a USB speaker is the more reliable choice there.
+</details>
+
+<details>
+<summary><b>The panel doesn't show up in AirPlay</b></summary>
+
+Your phone and the panel must be on the same Wi‑Fi network (not a guest network, and not separated by "client isolation" on mesh or office networks). Check that AirPlay is on in the Sound tab. If it shows an error about another receiver, run `sudo systemctl disable --now shairport-sync` on the Pi and toggle AirPlay off and on.
 </details>
 
 <details>
@@ -422,7 +530,7 @@ npm run dev        # http://localhost:8080 (manage) and http://localhost:8080/di
 npm test
 ```
 
-Requests from `localhost` are trusted, so you won't need to pair while developing. To try pairing, open the manage page from another device on your network using your computer's IP address. Dev data lives in `./.data`.
+Requests from `localhost` are trusted, so you won't need to pair while developing. Sound controls need the Pi's audio tools (`pactl`, `bluetoothctl`, `shairport-sync`). Without them, the Sound tab says so. To work on the Now playing widget on a laptop, run with `PANEL_FAKE_AIRPLAY=1`: Panel listens for shairport-sync metadata on UDP port 5571 without starting a receiver. To try pairing, open the manage page from another device on your network using your computer's IP address. Dev data lives in `./.data`.
 
 ```text
 server/
@@ -430,6 +538,7 @@ server/
   auth.js           Pairing codes and device sessions
   scheduler.js      Keeps polling widgets fresh; builds the daily-brief digest
   updater.js        Update checks, install, rollback
+  audio.js          Speakers, volume, Bluetooth pairing, AirPlay receiver, now playing
   store.js          config.json / state.json persistence
   widgets/*.js      One file per widget type
   lib/              iCal parser, RSS reader, view mapping, OpenRouter client, time zones
@@ -483,7 +592,7 @@ Everything the manage page does goes through a small JSON API. Requests need a p
 | `POST` | `/api/pair/confirm` | *Public.* `{code}` → sets the session cookie |
 | `POST` | `/hook/:id` | *Public, token required.* Webhook for a widget |
 | `GET` | `/api/display/state` | Everything the screen shows |
-| `GET` | `/api/stream` | Server-sent events: `state`, `widget`, `update`, `reload` |
+| `GET` | `/api/stream` | Server-sent events: `state`, `widget`, `update`, `audio`, `reload` |
 | `GET` | `/api/admin/bootstrap` | Settings, widgets, widget catalog, devices, system and update info |
 | `PUT` | `/api/settings` | Partial settings update |
 | `POST` | `/api/widgets` | `{type, title?, w?, h?, config?}` |
@@ -492,9 +601,17 @@ Everything the manage page does goes through a small JSON API. Requests need a p
 | `POST` | `/api/widgets/:id/refresh` | Fetch now |
 | `POST` | `/api/widgets/:id/action` | Same as the webhook, without a token |
 | `POST` | `/api/widgets/:id/token` | Rotate the webhook token |
+| `POST` | `/api/widgets/:id/preview` | Run an API widget's request with unsaved `{config}` and return the response, timing and mapped result |
 | `GET` | `/api/widgets/:id/context` | The daily brief's full prompt |
 | `GET` | `/api/geocode?q=` | City search |
 | `GET` / `POST` | `/api/ai/models` · `/api/ai/test` | OpenRouter model list · key test |
+| `GET` | `/api/audio` | Speakers, volume, Bluetooth devices, AirPlay and now-playing state |
+| `PUT` | `/api/audio/output` · `/api/audio/volume` | `{name}` · `{volume, muted}` |
+| `POST` | `/api/audio/test` | Play a chime on the current speaker |
+| `POST` | `/api/audio/bluetooth/scan` | Look for nearby speakers (about 12 seconds) |
+| `POST` | `/api/audio/bluetooth/:mac/:action` | `pair`, `connect`, `disconnect` or `forget` |
+| `PUT` | `/api/audio/airplay` | `{enabled}` |
+| `GET` | `/api/audio/art` | Cover art for the current song |
 | `GET` | `/api/system/update` | Update status |
 | `POST` | `/api/system/check-update` | Check now |
 | `POST` | `/api/system/update` | Install (progress arrives as `update` events) |
@@ -515,7 +632,9 @@ Issues and pull requests are welcome.
 - Touchscreen support: tick off tasks and switch pages on the panel itself
 - Screen sleep schedule (turn the display off at night)
 - Drag-and-drop layout on the manage page
-- More integrations: Todoist, Home Assistant entities, Spotify now playing, photo frame
+- Playback controls (pause, skip) on the Now playing card
+- Spotify Connect as well as AirPlay
+- More integrations: Todoist, Home Assistant entities, photo frame
 - Multiple pages that rotate on a timer
 - Optional HTTPS on the local network
 

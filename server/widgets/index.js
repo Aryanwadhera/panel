@@ -9,8 +9,9 @@ import headlines from './headlines.js';
 import status from './status.js';
 import countdown from './countdown.js';
 import note from './note.js';
+import nowplaying from './nowplaying.js';
 
-const all = [summary, clock, weather, calendar, tasks, webhook, api, headlines, status, countdown, note];
+const all = [summary, clock, weather, calendar, tasks, nowplaying, webhook, api, headlines, status, countdown, note];
 
 export const types = Object.fromEntries(all.map((t) => [t.type, t]));
 
@@ -24,6 +25,7 @@ export function catalog() {
     fields: t.fields,
     hookable: !!t.ingest,
     refreshable: !!t.fetch,
+    templates: t.templates,
   }));
 }
 

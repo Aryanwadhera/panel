@@ -7,6 +7,7 @@
 #   PANEL_DIR=~/panel       where the code lives
 #   PANEL_PORT=80           web port (falls back to 8080 if 80 is taken)
 #   PANEL_KIOSK=auto        auto | yes | no : open the display full-screen on boot
+#   PANEL_AUDIO=yes         yes | no : speakers, Bluetooth audio and AirPlay
 #   PANEL_HOSTNAME=panel    rename the Pi so it's reachable at http://panel.local
 #   PANEL_BRANCH=main
 set -euo pipefail
@@ -17,8 +18,10 @@ DIR="${PANEL_DIR:-$HOME/panel}"
 DATA="${PANEL_DATA:-$HOME/.panel}"
 PORT="${PANEL_PORT:-80}"
 KIOSK="${PANEL_KIOSK:-auto}"
+AUDIO="${PANEL_AUDIO:-yes}"
 WANT_HOSTNAME="${PANEL_HOSTNAME:-}"
 USER_NAME="$(id -un)"
+USER_UID="$(id -u)"
 
 bold=$'\e[1m'; dim=$'\e[2m'; green=$'\e[32m'; yellow=$'\e[33m'; red=$'\e[31m'; reset=$'\e[0m'
 step() { printf '\n%s→ %s%s\n' "$bold" "$1" "$reset"; }
@@ -104,12 +107,48 @@ PORT=$PORT
 PANEL_DATA=$DATA
 EOF
 
+# ------------------------------------------------------------------ sound
+if [ "$AUDIO" != "no" ]; then
+  step "Setting up sound, Bluetooth and AirPlay"
+  # PipeWire is the Pi's sound system (preinstalled on the Desktop edition);
+  # BlueZ handles Bluetooth speakers; shairport-sync is the AirPlay receiver.
+  want=(pipewire pipewire-pulse pipewire-alsa wireplumber libspa-0.2-bluetooth pulseaudio-utils bluez alsa-utils shairport-sync)
+  pkgs=()
+  for p in "${want[@]}"; do apt-cache show "$p" >/dev/null 2>&1 && pkgs+=("$p"); done
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${pkgs[@]}" >/dev/null
+
+  # Panel runs its own AirPlay receiver, named after your panel, so the
+  # system-wide one that the package starts must not run as well.
+  sudo systemctl disable --now shairport-sync >/dev/null 2>&1 || true
+
+  # Start your sound server at boot, even when nobody has logged in.
+  sudo loginctl enable-linger "$USER_NAME"
+  sudo systemctl --global enable pipewire.socket pipewire-pulse.socket wireplumber.service >/dev/null 2>&1 || true
+  for g in audio bluetooth; do getent group "$g" >/dev/null && sudo usermod -aG "$g" "$USER_NAME"; done
+  have rfkill && sudo rfkill unblock bluetooth || true
+  sudo systemctl enable --now bluetooth >/dev/null 2>&1 || true
+
+  # WirePlumber normally turns on Bluetooth audio only for someone logged in
+  # at the screen. A panel is headless, so keep it on all the time.
+  mkdir -p "$HOME/.config/wireplumber/bluetooth.lua.d" "$HOME/.config/wireplumber/wireplumber.conf.d"
+  echo 'bluez_monitor.properties["with-logind"] = false' > "$HOME/.config/wireplumber/bluetooth.lua.d/80-panel.lua"
+  cat > "$HOME/.config/wireplumber/wireplumber.conf.d/80-panel.conf" <<'WPEOF'
+wireplumber.profiles = {
+  main = {
+    monitor.bluez.seat-monitoring = disabled
+  }
+}
+WPEOF
+  XDG_RUNTIME_DIR="/run/user/$USER_UID" systemctl --user restart wireplumber >/dev/null 2>&1 || true
+  info "PipeWire, Bluetooth audio and AirPlay ready"
+fi
+
 # ------------------------------------------------------------------ service
 step "Starting Panel as a service"
 sudo tee /etc/systemd/system/panel.service >/dev/null <<EOF
 [Unit]
 Description=Panel dashboard
-After=network-online.target
+After=network-online.target user@$USER_UID.service bluetooth.service
 Wants=network-online.target
 
 [Service]
@@ -118,6 +157,8 @@ User=$USER_NAME
 WorkingDirectory=$DIR
 EnvironmentFile=$DATA/panel.env
 Environment=NODE_ENV=production
+# Lets Panel reach your user's sound server (PipeWire) for speakers and AirPlay.
+Environment=XDG_RUNTIME_DIR=/run/user/$USER_UID
 ExecStart=$(command -v node) $DIR/server/index.js
 Restart=always
 RestartSec=2

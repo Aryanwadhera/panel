@@ -41,3 +41,15 @@ test('rss and atom parsing', () => {
   const atom = '<feed><title>Blog</title><entry><title>Post</title><link href="https://y"/><updated>2026-10-30T10:00:00Z</updated></entry></feed>';
   assert.equal(parseFeed(atom).items[0].link, 'https://y');
 });
+
+test('api value tidying: scale, decimals, numeric change, status words', () => {
+  const s = mapView('stat', { available: [{ amount: 1234567 }], chg: -3.3412 }, { valuePath: 'available[0].amount', scale: 0.01, decimals: 0, deltaPath: 'chg', deltaSuffix: '%' });
+  assert.equal(s.value, 12346);
+  assert.equal(s.delta, '-3.34%');
+  assert.equal(mapView('stat', { up: 2.5 }, { valuePath: 'up', deltaPath: 'up' }).delta, '+2.5');
+  const l = mapView('list', { runs: [{ t: 'Build', c: 'success' }, { t: 'Deploy', c: 'failure' }, { t: 'Lint', c: 'in_progress' }] },
+    { itemsPath: 'runs', itemTitlePath: 't', itemStatusPath: 'c' });
+  assert.deepEqual(l.items.map((i) => i.status), ['ok', 'bad', 'warn']);
+  assert.throws(() => mapView('stat', { a: 1 }, { valuePath: 'b.c' }), /Nothing at “b.c”/);
+  assert.throws(() => mapView('list', { a: 1 }, { itemsPath: 'rows' }), /No list at “rows”/);
+});

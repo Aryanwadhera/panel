@@ -18,6 +18,9 @@ export const viewFields = [
   { key: 'view', label: 'Show as', type: 'select', options: VIEWS, default: 'stat' },
   { key: 'prefix', label: 'Prefix', type: 'text', placeholder: '$', showIf: isViews('stat'), half: true },
   { key: 'suffix', label: 'Suffix', type: 'text', placeholder: '%', showIf: isViews('stat'), half: true },
+  { key: 'caption', label: 'Caption', type: 'text', placeholder: 'vs. yesterday', showIf: isViews('stat'), help: 'Small text under the number, when the data has no label.' },
+  { key: 'scale', label: 'Multiply by', type: 'number', placeholder: '1', showIf: isViews('stat', 'progress'), half: true, help: 'e.g. 0.01 to turn cents into dollars.' },
+  { key: 'decimals', label: 'Decimal places', type: 'number', placeholder: 'auto', showIf: isViews('stat', 'progress'), half: true },
   { key: 'maxItems', label: 'Max rows', type: 'number', default: 8, showIf: isViews('list', 'feed') },
 ];
 
@@ -25,10 +28,12 @@ export const pathFields = [
   { key: 'valuePath', label: 'Value', type: 'text', placeholder: 'data.total', showIf: isViews('stat', 'progress'), advanced: true },
   { key: 'labelPath', label: 'Label', type: 'text', placeholder: 'data.name', showIf: isViews('stat', 'progress'), advanced: true },
   { key: 'deltaPath', label: 'Change', type: 'text', placeholder: 'data.change', showIf: isViews('stat'), advanced: true },
+  { key: 'deltaSuffix', label: 'Change suffix', type: 'text', placeholder: '%', showIf: isViews('stat'), advanced: true, help: 'Added after a numeric change, e.g. % for 2.4 → +2.4%.' },
   { key: 'maxPath', label: 'Goal / max', type: 'text', placeholder: 'data.goal', showIf: isViews('progress'), advanced: true },
   { key: 'itemsPath', label: 'Items array', type: 'text', placeholder: 'results', showIf: isViews('list', 'feed'), advanced: true },
   { key: 'itemTitlePath', label: 'Item title', type: 'text', placeholder: 'name', showIf: isViews('list', 'feed'), advanced: true },
   { key: 'itemMetaPath', label: 'Item detail', type: 'text', placeholder: 'status', showIf: isViews('list', 'feed'), advanced: true },
+  { key: 'itemStatusPath', label: 'Item status', type: 'text', placeholder: 'conclusion', showIf: isViews('list'), advanced: true, help: 'Values like success, ok or up show a green dot; failure, error or down show red.' },
   { key: 'textPath', label: 'Text', type: 'text', placeholder: 'message', showIf: isViews('text'), advanced: true },
 ];
 
@@ -44,6 +49,37 @@ function pick(payload, path, key) {
   return payload && typeof payload === 'object' ? payload[key] : undefined;
 }
 
+/** Map the many ways APIs say "fine" or "broken" onto ok / warn / bad. */
+function statusOf(v) {
+  if (v == null || v === '') return null;
+  if (typeof v === 'boolean') return v ? 'ok' : 'bad';
+  const s = String(v).toLowerCase();
+  if (/^(ok|good|up|success|succeeded|passed|passing|healthy|online|active|operational|green|true|done|completed?)$/.test(s)) return 'ok';
+  if (/^(bad|down|error|errored|fail|failed|failure|unhealthy|offline|critical|red|false|cancelled|canceled|timed_out|major_outage)$/.test(s)) return 'bad';
+  if (/^(warn|warning|degraded|pending|queued|in_progress|running|partial_outage|yellow|skipped|neutral)$/.test(s)) return 'warn';
+  return null;
+}
+
+function scaled(n, cfg) {
+  if (n == null) return n;
+  const k = cfg.scale === '' || cfg.scale == null ? 1 : Number(cfg.scale);
+  let v = Number.isFinite(k) ? n * k : n;
+  const d = cfg.decimals === '' || cfg.decimals == null ? null : Number(cfg.decimals);
+  if (Number.isInteger(d) && d >= 0 && d <= 6) v = Number(v.toFixed(d));
+  else v = Number(v.toPrecision(12)); // tidy float noise like 0.1 * 3
+  return v;
+}
+
+function formatDelta(d, cfg) {
+  if (d == null || d === '') return null;
+  if (typeof d === 'number' || /^-?\d+(\.\d+)?$/.test(String(d))) {
+    const n = Number(d);
+    const r = Math.abs(n) >= 100 ? Math.round(n) : Number(n.toFixed(2));
+    return `${r > 0 ? '+' : ''}${r}${cfg.deltaSuffix || ''}`;
+  }
+  return String(d);
+}
+
 function toItem(it, cfg) {
   if (it == null) return null;
   if (typeof it !== 'object') return { title: String(it) };
@@ -54,7 +90,8 @@ function toItem(it, cfg) {
   if (title == null) return null;
   const item = { title: String(title).slice(0, 200) };
   if (meta != null && meta !== '') item.meta = String(meta).slice(0, 80);
-  if (typeof it.status === 'string' && /^(ok|good|up|warn|bad|down|error)$/i.test(it.status)) item.status = it.status.toLowerCase();
+  const status = statusOf(cfg.itemStatusPath ? getPath(it, cfg.itemStatusPath) : it.status);
+  if (status) item.status = status;
   return item;
 }
 
@@ -64,6 +101,7 @@ function itemsFrom(payload, cfg) {
   if (!Array.isArray(raw)) {
     if (payload?.item) raw = [payload.item];
     else if (payload && typeof payload === 'object' && !cfg.itemsPath) raw = [payload];
+    else if (cfg.itemsPath) throw new Error(`No list at “${cfg.itemsPath}” in the response`);
     else raw = [];
   }
   return raw.map((it) => toItem(it, cfg)).filter(Boolean);
@@ -74,15 +112,15 @@ export function mapView(view, payload, cfg = {}, prev = null) {
   switch (view) {
     case 'stat': {
       const rawValue = typeof payload === 'number' || typeof payload === 'string' ? payload : pick(payload, cfg.valuePath, 'value');
-      const value = num(rawValue);
-      if (value === null && rawValue == null) throw new Error('Expected a "value" (or set the Value path)');
+      const value = scaled(num(rawValue), cfg);
+      if (value === null && rawValue == null) throw new Error(cfg.valuePath ? `Nothing at “${cfg.valuePath}” in the response` : 'Expected a "value" (or set the Value path)');
       const history = [...(prev?.history || []), value].filter((v) => v !== null).slice(-30);
       const trend = Array.isArray(payload?.trend) ? payload.trend.map(num).filter((v) => v !== null) : history;
       return {
         value: value ?? String(rawValue),
         label: pick(payload, cfg.labelPath, 'label') ?? null,
-        delta: pick(payload, cfg.deltaPath, 'delta') ?? null,
-        caption: payload?.caption ?? null,
+        delta: formatDelta(pick(payload, cfg.deltaPath, 'delta'), cfg),
+        caption: payload?.caption ?? (cfg.caption || null),
         prefix: payload?.prefix ?? cfg.prefix ?? '',
         suffix: payload?.suffix ?? cfg.suffix ?? '',
         trend,
@@ -90,9 +128,9 @@ export function mapView(view, payload, cfg = {}, prev = null) {
       };
     }
     case 'progress': {
-      const value = num(typeof payload === 'number' ? payload : pick(payload, cfg.valuePath, 'value'));
-      if (value === null) throw new Error('Expected a numeric "value"');
-      const max = num(pick(payload, cfg.maxPath, 'max')) || 100;
+      const value = scaled(num(typeof payload === 'number' ? payload : pick(payload, cfg.valuePath, 'value')), cfg);
+      if (value === null) throw new Error(cfg.valuePath ? `No number at “${cfg.valuePath}” in the response` : 'Expected a numeric "value"');
+      const max = scaled(num(pick(payload, cfg.maxPath, 'max')), cfg) || 100;
       return { value, max, label: pick(payload, cfg.labelPath, 'label') ?? null };
     }
     case 'list':

@@ -34,10 +34,11 @@ export class Scheduler {
     const sections = [];
     for (const w of this.store.config.widgets) {
       const def = types[w.type];
-      if (w.id === excludeId || !def?.summarize) continue;
+      if (w.id === excludeId || w.draft || !def?.summarize) continue;
       const st = this.store.state[w.id] || {};
+      const data = def.live ? this.liveData?.(w) : st.data;
       let text = null;
-      try { text = def.summarize(st.data, w.config || {}, this.context(w)); } catch { /* skip */ }
+      try { text = def.summarize(data, w.config || {}, this.context(w)); } catch { /* skip */ }
       if (st.error && !text) text = `(unavailable: ${st.error})`;
       if (text) sections.push(`## ${w.title || def.name}\n${text}`);
     }
@@ -48,7 +49,7 @@ export class Scheduler {
     const now = Date.now();
     for (const w of this.store.config.widgets) {
       const def = types[w.type];
-      if (!def?.fetch || this.running.has(w.id)) continue;
+      if (!def?.fetch || w.draft || this.running.has(w.id)) continue;
       if (def.startDelay && now - this.bootAt < def.startDelay * 1000 && !this.store.state[w.id]?.data) continue;
       const st = this.store.state[w.id] || {};
       const every = st.error ? Math.min(intervalOf(w), RETRY_AFTER_ERROR) : intervalOf(w);

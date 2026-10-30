@@ -106,6 +106,15 @@ const I = {
   status: '<path d="M3 12.5h4l2.2-5.5 4.2 11 2.4-5.5H21"/>',
   countdown: '<path d="M7 3.5h10M7 20.5h10M8 3.5c0 4.5 8 4.5 8 8.5s-8 4-8 8.5M16 3.5c0 4.5-8 4.5-8 8.5"/>',
   note: '<path d="M5.5 3.5h9l4 4v13h-13z"/><path d="M14.5 3.5v4h4M8.5 12h7M8.5 15.5h5"/>',
+  nowplaying: '<path d="M9 18V5.5l11-2V16"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/>',
+  bluetooth: '<path d="m7 7 10 10-5 4.5V2.5L17 7 7 17"/>',
+  usb: '<path d="M12 2.5v15M12 2.5l-2 3h4z"/><circle cx="12" cy="19" r="2"/><path d="M12 13l-4.5-2.5V8M12 11l4.5-2V7"/><rect x="6.3" y="6" width="2.4" height="2.2" rx=".4"/><circle cx="16.5" cy="6.5" r="1.1"/>',
+  hdmi: '<rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8.5 20h7M12 16.5V20"/>',
+  headphones: '<path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3.5" y="14" width="4" height="6.5" rx="1.5"/><rect x="16.5" y="14" width="4" height="6.5" rx="1.5"/>',
+  speaker: '<rect x="5.5" y="2.5" width="13" height="19" rx="2.5"/><circle cx="12" cy="14.5" r="3.5"/><circle cx="12" cy="7" r="1"/>',
+  airplay: '<path d="M6.5 17H5a2.5 2.5 0 0 1-2.5-2.5v-8A2.5 2.5 0 0 1 5 4h14a2.5 2.5 0 0 1 2.5 2.5v8A2.5 2.5 0 0 1 19 17h-1.5"/><path d="m12 14 5 6.5H7z"/>',
+  volume: '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>',
+  mute: '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="m16 9.5 5 5M21 9.5l-5 5"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   up: '<path d="m6 15 6-6 6 6"/>',
   down: '<path d="m6 9 6 6 6-6"/>',
@@ -128,6 +137,7 @@ const brand = (name) => h('span', { class: 'brand' }, h('span', { class: 'brand-
 let B = null;     // bootstrap payload from the server
 let bootId = null; // changes when the server restarts (e.g. after an update)
 const updateListeners = new Set();
+const audioListeners = new Set();
 let tab = 'layout';
 let events = null;
 
@@ -522,6 +532,7 @@ function openEvents(onChange) {
   events.addEventListener('widget', (e) => { const w = JSON.parse(e.data); if (w) { merge(w); onChange('data', w.id); } });
   events.addEventListener('state', (e) => { const s = JSON.parse(e.data); s.widgets.forEach(merge); onChange('data'); });
   events.addEventListener('update', (e) => setUpdate(JSON.parse(e.data)));
+  events.addEventListener('audio', (e) => { const a = JSON.parse(e.data); for (const fn of [...audioListeners]) fn(a); });
 }
 function closeEvents() {
   events?.close();
@@ -532,12 +543,12 @@ function showDashboard() {
   const live = h('span', { class: 'live off' }, h('i'), 'Connecting');
   const content = h('div');
   const tabs = h('div', { class: 'tabs', role: 'tablist' });
-  const TABS = [['layout', 'Widgets'], ['settings', 'Settings'], ['devices', 'Devices']];
+  const TABS = [['layout', 'Widgets'], ['sound', 'Sound'], ['settings', 'Settings'], ['devices', 'Devices']];
 
   const drawTabs = () => tabs.replaceChildren(...TABS.map(([id, label]) => h('button', {
     role: 'tab', 'aria-selected': String(tab === id), onclick: () => { tab = id; drawTabs(); drawContent(); },
   }, label)));
-  const drawContent = () => content.replaceChildren(({ layout: layoutTab, settings: settingsTab, devices: devicesTab })[tab]());
+  const drawContent = () => content.replaceChildren(({ layout: layoutTab, sound: soundTab, settings: settingsTab, devices: devicesTab })[tab]());
 
   render(h('div', { class: `page${tab === 'layout' ? ' wide' : ''}`, id: 'page' },
     h('div', { class: 'top' }, brand(B.settings.name), live),
@@ -641,7 +652,7 @@ function openGallery() {
       onclick: async (e) => {
         const btn = e.currentTarget;
         btn.style.opacity = .5;
-        const w = await busy(null, () => api('POST', '/api/widgets', { type: c.type }));
+        const w = await busy(null, () => api('POST', '/api/widgets', { type: c.type, draft: true }));
         if (!w) { btn.style.opacity = 1; return; }
         B.widgets.push(w);
         refreshRows?.();
@@ -672,8 +683,10 @@ function fieldControl(f, cfg, onChange) {
       return sel;
     }
     case 'textarea':
+    case 'code':
     case 'lines': {
-      const ta = h('textarea', { class: `input${f.type === 'lines' ? ' mono' : ''}`, rows: f.type === 'lines' ? '3' : '4', placeholder: ph, spellcheck: f.type === 'lines' ? 'false' : 'true', oninput: () => onChange(ta.value) });
+      const mono = f.type !== 'textarea';
+      const ta = h('textarea', { class: `input${mono ? ' mono' : ''}`, rows: f.type === 'textarea' ? '4' : '3', placeholder: ph, spellcheck: mono ? 'false' : 'true', oninput: () => onChange(ta.value) });
       ta.value = saved ? '' : v ?? '';
       return ta;
     }
@@ -718,11 +731,13 @@ function buildFields(fields, cfg, onAnyChange) {
       else node = make(f);
       (f.advanced ? advanced : basic).push(node);
     }
+    const mapping = fields.some((f) => f.advanced && /Path$/.test(f.key));
     wrap.replaceChildren(...basic, advanced.length ? h('details', { class: 'more' },
-      h('summary', {}, 'Map fields from your own JSON'),
-      h('div', { class: 'fields' }, h('p', { class: 'help small muted' }, 'Only needed if the sender’s JSON doesn’t match the format below. Use dot paths like data.total or items[0].name.'), advanced)) : null);
+      h('summary', {}, mapping ? 'Map fields from your own JSON' : 'More options'),
+      h('div', { class: 'fields' }, mapping ? h('p', { class: 'help small muted' }, 'Only needed if the sender’s JSON doesn’t match the format below. Use dot paths like data.total or items[0].name.') : null, advanced)) : null);
   };
   draw();
+  wrap.redraw = draw;
   return wrap;
 }
 
@@ -813,6 +828,210 @@ function briefSection(w, onUpdated) {
     details);
 }
 
+// ---------------------------------------------------------------- API widget tools
+
+function fillTemplate(str, vals) {
+  return String(str).replace(/\{\{(\w+)\}\}/g, (_, k) => (vals[k] ?? '').trim());
+}
+
+function applyTemplate(t, vals, cfg, draft) {
+  // Start clean so leftovers from a previous setup don't confuse the mapping.
+  for (const k of Object.keys(cfg)) if (k !== 'includeInBrief') delete cfg[k];
+  Object.assign(cfg, { method: 'GET', auth: 'none', every: '5', view: 'stat', maxItems: 8 });
+  for (const [k, v] of Object.entries(t.config)) cfg[k] = fillTemplate(v, vals);
+  const tokenInput = t.inputs.find((i) => i.token);
+  const token = tokenInput && (vals[tokenInput.key] || '').trim();
+  if (token) {
+    const [kind, header] = tokenInput.token.split(':');
+    cfg.auth = kind;
+    if (header) cfg.authHeader = header;
+    cfg.authToken = token;
+  }
+  draft.title = fillTemplate(t.title || t.name, vals).slice(0, 60);
+  if (t.w) draft.w = Math.min(B.settings.grid.cols, t.w);
+  if (t.h) draft.h = Math.min(B.settings.grid.rows, t.h);
+}
+
+function templatePicker(templates, { isNew }, onUse) {
+  if (!templates.length) return null;
+  const sec = h('section');
+  const list = () => {
+    const groups = [...new Set(templates.map((t) => t.group))];
+    sec.replaceChildren(
+      h('h3', {}, isNew ? 'Start from a template' : 'Templates'),
+      h('p', { class: 'small muted', style: { margin: '-6px 0 12px' } }, 'Or set up any API yourself in Settings below.'),
+      ...groups.map((g) => h('div', { class: 'tpl-group' },
+        h('div', { class: 'label muted small' }, g),
+        h('div', { class: 'chips' }, templates.filter((t) => t.group === g).map((t) => h('button', { type: 'button', class: 'chip', title: t.description, onclick: () => form(t) }, t.name))))));
+  };
+  const form = (t) => {
+    const vals = Object.fromEntries(t.inputs.map((i) => [i.key, i.default || '']));
+    const inputs = t.inputs.map((i) => {
+      const inp = h('input', { class: `input${i.token ? ' mono' : ''}`, type: i.token ? 'password' : 'text', placeholder: i.placeholder || '', value: vals[i.key], autocomplete: 'off', spellcheck: 'false', oninput: () => { vals[i.key] = inp.value; } });
+      return field(`${i.label}${i.optional ? ' (optional)' : ''}`, inp);
+    });
+    const use = h('button', { class: 'btn primary small', onclick: () => {
+      const missing = t.inputs.find((i) => !i.optional && !String(vals[i.key] || '').trim());
+      if (missing) return toast(`${missing.label} is needed`, true);
+      if (/\{(lat|lon)\}/.test(t.config.url) && !B.settings.location) return toast('Set the panel’s location in Settings first', true);
+      onUse(t, vals);
+      sec.replaceChildren(h('div', { class: 'callout small' }, h('b', {}, `${t.name} is set up. `), 'Check the test result below, then tap Save.'), h('button', { class: 'btn ghost small', style: { marginTop: '8px' }, onclick: list }, 'Pick a different template'));
+    } }, 'Use template');
+    sec.replaceChildren(
+      h('h3', {}, t.name),
+      h('p', { class: 'small muted', style: { margin: '-6px 0 14px' } }, t.description),
+      h('div', { class: 'fields' }, inputs.length ? inputs : h('p', { class: 'small muted' }, 'Nothing to fill in.')),
+      h('div', { class: 'actions', style: { marginTop: '14px' } }, use, h('button', { class: 'btn ghost small', onclick: list }, 'Back')));
+    sec.querySelector('input')?.focus();
+  };
+  list();
+  return sec;
+}
+
+const PICK_TARGETS = {
+  stat: [['valuePath', 'Number'], ['deltaPath', 'Change'], ['labelPath', 'Label']],
+  progress: [['valuePath', 'Value'], ['maxPath', 'Goal'], ['labelPath', 'Label']],
+  list: [['itemsPath', 'Rows (a list)'], ['itemTitlePath', 'Row title'], ['itemMetaPath', 'Row detail'], ['itemStatusPath', 'Row status']],
+  feed: [['itemsPath', 'Rows (a list)'], ['itemTitlePath', 'Row title'], ['itemMetaPath', 'Row detail']],
+  text: [['textPath', 'Text']],
+};
+
+function apiTester(w, cfg, onMapped) {
+  const sec = h('section');
+  let result = null;
+  let target = null;
+
+  const run = async (reuse = false) => {
+    if (!cfg.url) { result = null; draw(); return; }
+    if (!reuse) { result = { loading: true }; draw(); }
+    try {
+      result = await api('POST', `/api/widgets/${w.id}/preview`, { config: cfg, reuse });
+    } catch (err) {
+      result = { ok: false, error: err.message };
+    }
+    draw();
+  };
+
+  const targets = () => PICK_TARGETS[cfg.view || 'stat'] || PICK_TARGETS.stat;
+
+  const pick = (path, value) => {
+    const t = target || targets()[0][0];
+    if (t === 'itemsPath') {
+      if (!Array.isArray(value)) return toast('Pick a list: the ones marked [ ]', true);
+      cfg.itemsPath = path;
+      target = 'itemTitlePath';
+    } else if (t.startsWith('item')) {
+      const base = cfg.itemsPath || '';
+      let rel = null;
+      if (path.startsWith(`${base}[`)) rel = path.slice(path.indexOf(']', base.length) + 1).replace(/^\./, '');
+      else {
+        const m = /^(.*?)\[\d+\]\.?(.*)$/.exec(path);
+        if (m) { cfg.itemsPath = m[1]; rel = m[2]; }
+      }
+      if (!rel) return toast('Pick a value inside one of the rows', true);
+      if (value && typeof value === 'object') return toast('Pick a single value, not a group', true);
+      cfg[t] = rel;
+      const order = targets().map(([k]) => k);
+      target = order[order.indexOf(t) + 1] || t;
+    } else {
+      if (value && typeof value === 'object') return toast('Pick a single value, not a group', true);
+      cfg[t] = path;
+      const order = targets().map(([k]) => k);
+      target = order[order.indexOf(t) + 1] || t;
+    }
+    onMapped();
+    run(true);
+  };
+
+  /** Which path a row of the explorer currently feeds, for highlighting. */
+  const usedBy = (path) => {
+    const hits = [];
+    for (const [k, label] of targets()) {
+      const v = cfg[k];
+      if (v == null || v === '') continue;
+      const full = k.startsWith('item') && k !== 'itemsPath' ? `${cfg.itemsPath || ''}[0]${v.startsWith('[') ? '' : '.'}${v}` : v;
+      if (full === path || (k === 'itemsPath' && v === path)) hits.push(label.replace(/ \(a list\)$/, ''));
+    }
+    return hits;
+  };
+
+  const tree = (value) => {
+    const rows = [];
+    const walk = (key, v, path, depth) => {
+      if (rows.length > 400) return;
+      const isObj = v && typeof v === 'object';
+      const tags = usedBy(path);
+      const preview = isObj
+        ? (Array.isArray(v) ? `[ ${v.length}${v.length >= 20 ? '+' : ''} ]` : `{ ${Object.keys(v).length} }`)
+        : typeof v === 'string' ? `"${v}"` : String(v);
+      rows.push(h('button', {
+        type: 'button', class: `jt-row${tags.length ? ' picked' : ''}${isObj ? ' group' : ''}`,
+        style: { paddingLeft: `${10 + depth * 14}px` }, title: path || '(whole response)',
+        onclick: () => pick(path, v),
+      },
+      key != null ? h('span', { class: 'jt-k' }, key) : null,
+      h('span', { class: `jt-v ${isObj ? 'muted' : typeof v}` }, preview),
+      tags.length ? h('span', { class: 'jt-tag' }, tags.join(', ')) : null));
+      if (!isObj || depth > 7) return;
+      if (Array.isArray(v)) {
+        v.slice(0, 3).forEach((x, i) => walk(`${i}`, x, `${path}[${i}]`, depth + 1));
+        if (v.length > 3) rows.push(h('div', { class: 'jt-more', style: { paddingLeft: `${24 + depth * 14}px` } }, `… ${v.length - 3} more`));
+      } else {
+        for (const [k, x] of Object.entries(v)) walk(k, x, path ? `${path}.${k}` : k, depth + 1);
+      }
+    };
+    walk(null, value, '', 0);
+    return h('div', { class: 'jt' }, rows);
+  };
+
+  const showsAs = (m) => {
+    if (!m) return null;
+    const view = cfg.view || 'stat';
+    let text;
+    if (view === 'stat') text = `${m.prefix || ''}${typeof m.value === 'number' ? m.value.toLocaleString() : m.value}${m.suffix || ''}${m.delta ? `  ${m.delta}` : ''}${m.caption || m.label ? `  · ${m.caption || m.label}` : ''}`;
+    else if (view === 'progress') text = `${Math.round((m.value / m.max) * 100)}%  (${m.value} of ${m.max})${m.label ? ` · ${m.label}` : ''}`;
+    else if (view === 'text') text = m.text;
+    else {
+      text = m.items.length ? m.items.slice(0, 4).map((i) => h('div', { class: 'shows-row' },
+        i.status ? h('span', { class: `sdot ${i.status}` }) : null,
+        h('span', {}, i.title), i.meta ? h('span', { class: 'muted' }, ` \u2014 ${i.meta}`) : null)) : '(no rows)';
+    }
+    return h('div', { class: 'shows-as' }, h('div', { class: 'label small muted' }, 'On the panel'), h('div', { class: `shows-as-v ${view}` }, text));
+  };
+
+  const draw = () => {
+    const test = h('button', { class: 'btn small', onclick: () => run(false) }, icon('refresh'), result ? 'Test again' : 'Test request');
+    const parts = [h('div', { class: 'actions', style: { justifyContent: 'space-between' } }, h('h3', { style: { margin: 0 } }, 'Test and pick fields'), test)];
+    if (!result) {
+      parts.push(h('p', { class: 'small muted', style: { marginTop: '8px' } }, cfg.url ? 'Run the request to see the response, then tap the values you want on the panel.' : 'Add a URL or pick a template first.'));
+    } else if (result.loading) {
+      parts.push(h('div', { class: 'row small muted', style: { padding: '12px 0' } }, h('span', { class: 'spinner' }), 'Calling the API…'));
+    } else {
+      const meta = result.meta;
+      parts.push(h('div', { class: 'small', style: { margin: '10px 0' } },
+        h('span', { class: result.ok ? 'ok-text' : 'error-text' }, result.ok ? '● Connected' : '● Failed'),
+        meta ? h('span', { class: 'muted' }, ` · ${meta.status} · ${meta.ms} ms${meta.type ? ` · ${meta.type}` : ''}`) : null));
+      if (!result.ok) parts.push(h('p', { class: 'error-text' }, result.error));
+      if (result.ok && result.mapped) parts.push(showsAs(result.mapped));
+      if (result.ok && result.mapError) parts.push(h('p', { class: 'small', style: { color: 'var(--warn)', margin: '8px 0' } }, `${result.mapError}. Tap a value below to fix it.`));
+      if (result.body != null && typeof result.body === 'object') {
+        const sel = h('select', { class: 'input', style: { height: '36px', width: 'auto' }, onchange: () => { target = sel.value; } },
+          targets().map(([k, label]) => h('option', { value: k }, label)));
+        sel.value = target && targets().some(([k]) => k === target) ? target : targets()[0][0];
+        target = sel.value;
+        parts.push(h('div', { class: 'actions', style: { margin: '14px 0 8px' } }, h('span', { class: 'small' }, 'Tap a value to use it as'), sel));
+        parts.push(tree(result.body));
+      } else if (result.body != null) {
+        parts.push(h('pre', { class: 'code', style: { whiteSpace: 'pre-wrap', marginTop: '10px' } }, String(result.body)));
+      }
+    }
+    sec.replaceChildren(...parts.filter(Boolean));
+  };
+  draw();
+  sec.run = () => run(false);
+  return sec;
+}
+
 function openEditor(id, { isNew = false } = {}) {
   const w = B.widgets.find((x) => x.id === id);
   if (!w) return;
@@ -821,6 +1040,7 @@ function openEditor(id, { isNew = false } = {}) {
   const draft = { title: w.title, w: w.w, h: w.h };
   const { cols, rows } = B.settings.grid;
   let dirty = false;
+  let saved = false;
 
   const updateLocal = (updated) => {
     Object.assign(w, updated);
@@ -829,22 +1049,40 @@ function openEditor(id, { isNew = false } = {}) {
   };
 
   const statusBits = () => [
-    w.error ? h('span', { class: 'error-text' }, w.error) : h('span', { class: 'small muted' }, w.updatedAt ? `Updated ${ago(w.updatedAt)}` : d.hookable && w.type !== 'tasks' ? 'Waiting for the first webhook' : d.refreshable ? 'Loading…' : ''),
+    w.error ? h('span', { class: 'error-text' }, w.error) : h('span', { class: 'small muted' }, w.updatedAt ? `Updated ${ago(w.updatedAt)}` : d.hookable && w.type !== 'tasks' ? 'Waiting for the first webhook' : w.type === 'api' && !w.config?.url ? 'Not set up yet' : d.refreshable ? 'Loading…' : ''),
   ];
   const statusLine = h('div', { style: { marginTop: '14px' } }, statusBits());
 
   const title = h('input', { class: 'input', value: draft.title, maxlength: '60', oninput: () => { draft.title = title.value; dirty = true; } });
-  const sizes = h('div', { class: 'half-row' },
+  const sizes = h('div', { class: 'half-row' });
+  const drawSizes = () => sizes.replaceChildren(
     field('Width', seg(Array.from({ length: cols }, (_, i) => ({ value: i + 1, label: String(i + 1) })), draft.w, (v) => { draft.w = v; dirty = true; })),
     field('Height', seg(Array.from({ length: rows }, (_, i) => ({ value: i + 1, label: String(i + 1) })), draft.h, (v) => { draft.h = v; dirty = true; })));
+  drawSizes();
 
   const hook = d.hookable ? webhookSection(w, cfg, updateLocal) : null;
   const settingsFields = d.fields.filter((f) => f.type !== 'tasks');
   const fields = settingsFields.length ? buildFields(settingsFields, cfg, () => { dirty = true; hook?.redraw(); }) : null;
 
+  // API widgets: start from a template, then test the request and pick fields.
+  let tester = null;
+  const apiTools = w.type === 'api' ? {
+    templates: templatePicker(d.templates || [], { isNew: isNew || !cfg.url }, (t, vals) => {
+      applyTemplate(t, vals, cfg, draft);
+      title.value = draft.title;
+      drawSizes();
+      fields.redraw();
+      dirty = true;
+      tester.run();
+    }),
+    tester: (tester = apiTester(w, cfg, () => { fields.redraw(); dirty = true; })),
+  } : null;
+
   const body = h('div', {},
+    apiTools?.templates,
     h('section', {}, h('div', { class: 'fields' }, field('Title', title), sizes), statusLine),
     fields ? h('section', {}, h('h3', {}, 'Settings'), fields) : null,
+    apiTools?.tester,
     w.type === 'tasks' ? tasksSection(w, updateLocal) : null,
     w.type === 'summary' ? briefSection(w, updateLocal) : null,
     hook);
@@ -854,6 +1092,7 @@ function openEditor(id, { isNew = false } = {}) {
     await api('DELETE', `/api/widgets/${w.id}`);
     B.widgets = B.widgets.filter((x) => x.id !== w.id);
     refreshRows?.();
+    saved = true;
     close();
     toast('Removed');
   }) }, 'Remove');
@@ -867,19 +1106,29 @@ function openEditor(id, { isNew = false } = {}) {
   const save = h('button', { class: 'btn primary', onclick: () => busy(save, async () => {
     const missing = d.fields.find((f) => f.required && showIf(f, cfg) && !String(cfg[f.key] ?? '').trim());
     if (missing) throw new Error(`${missing.label} is required`);
-    const updated = await api('PUT', `/api/widgets/${w.id}`, { ...draft, config: cfg });
+    const updated = await api('PUT', `/api/widgets/${w.id}`, { ...draft, config: cfg, publish: isNew });
     Object.assign(w, updated);
     refreshRows?.();
     dirty = false;
+    saved = true;
     close();
-    toast('Saved');
+    toast(isNew ? 'Added to the panel' : 'Saved');
   }) }, isNew ? 'Add to panel' : 'Save');
 
   const close = openSheet({
-    title: isNew ? `New ${d.name.toLowerCase()} widget` : w.title,
+    title: isNew ? `New ${/^[A-Z]{2,}$/.test(d.name) ? d.name : d.name.toLowerCase()} widget` : w.title,
     body,
     footer: [del, h('span', { class: 'spacer', style: { flex: 1 } }), refresh, save],
-    onClose: () => { if (dirty) toast('Changes not saved'); },
+    onClose: () => {
+      // A widget added from the gallery but never saved shouldn't linger on the panel.
+      if (isNew && !saved) {
+        api('DELETE', `/api/widgets/${w.id}`).catch(() => {});
+        B.widgets = B.widgets.filter((x) => x.id !== w.id);
+        refreshRows?.();
+        return;
+      }
+      if (dirty) toast('Changes not saved');
+    },
   });
 }
 
@@ -1003,6 +1252,161 @@ function updateSection() {
         h('div', { class: 'small muted', style: { marginTop: '4px' } }, 'Checks every few hours and installs overnight, between 3 and 6 AM.')) : null,
       restart ? h('div', { class: 'row' }, h('span', { class: 'grow small muted' }, 'Restart the Panel server'), restart) : null));
   });
+}
+
+// ---------------------------------------------------------------- sound
+
+const KIND = {
+  bluetooth: 'Bluetooth',
+  usb: 'USB',
+  hdmi: 'Screen speakers (HDMI)',
+  headphones: 'Headphone jack',
+  other: 'Speaker',
+};
+
+function soundTab() {
+  const wrap = h('div', {}, h('p', { class: 'muted', style: { padding: '8px 4px' } }, 'Looking for speakers…'));
+  let A = null;
+  let scanning = false;
+
+  const act = (btn, fn) => busy(btn, async () => {
+    const next = await fn();
+    if (next?.caps) { A = next; draw(); }
+  });
+
+  const setVolume = debounce((v) => api('PUT', '/api/audio/volume', { volume: v }).catch((e) => toast(e.message, true)), 150);
+
+  function speakers() {
+    const rows = A.outputs.map((o) => {
+      const on = o.name === A.output;
+      // The Pi's own outputs have technical names; call them what they are.
+      const builtIn = (o.kind === 'hdmi' || o.kind === 'headphones') && /built-in|bcm2835|vc4|fef0/i.test(`${o.description} ${o.name}`);
+      const label = builtIn ? KIND[o.kind] : o.description;
+      const detail = builtIn ? 'Built into the Pi' : KIND[o.kind];
+      return h('button', { type: 'button', class: `out${on ? ' on' : ''}`, 'aria-pressed': String(on), onclick: (e) => {
+        if (on) return;
+        act(e.currentTarget, async () => { const r = await api('PUT', '/api/audio/output', { name: o.name }); toast(`Playing through ${label}`); return r; });
+      } },
+      h('span', { class: 'ic' }, icon(o.kind === 'other' ? 'speaker' : o.kind)),
+      h('span', { class: 'grow' }, h('span', { class: 'title' }, label), h('span', { class: 'sub' }, detail + (o.state === 'running' ? ' · playing now' : ''))),
+      h('span', { class: 'radio' }));
+    });
+    const slider = h('input', { type: 'range', min: '0', max: '100', step: '1', value: A.volume ?? 50, 'aria-label': 'Volume', class: 'range',
+      oninput: () => { pct.textContent = `${slider.value}%`; setVolume(+slider.value); } });
+    const pct = h('span', { class: 'small muted mono', style: { width: '40px', textAlign: 'right' } }, `${A.volume ?? 50}%`);
+    const mute = h('button', { class: 'btn ghost icon', 'aria-label': A.muted ? 'Unmute' : 'Mute', onclick: () => act(mute, () => api('PUT', '/api/audio/volume', { muted: !A.muted })) }, icon(A.muted ? 'mute' : 'volume'));
+    const test = h('button', { class: 'btn small', onclick: () => act(test, async () => { await api('POST', '/api/audio/test'); toast('Played a chime'); }) }, 'Play test sound');
+    return [
+      h('div', { class: 'group-h' }, h('h2', {}, 'Speaker'), h('span', { class: 'small muted' }, 'Where the Pi plays sound')),
+      A.error ? h('div', { class: 'callout', style: { marginBottom: '12px' } }, A.error) : null,
+      h('div', { class: 'panel rows-list' },
+        rows.length ? rows : h('div', { class: 'panel-pad muted' }, 'No speakers found. Plug one into USB or the headphone jack, or pair one over Bluetooth below.'),
+        h('div', { class: 'row' }, mute, slider, pct),
+        h('div', { class: 'row' }, h('span', { class: 'grow small muted' }, 'Check the speaker is working'), test)),
+    ];
+  }
+
+  function bluetooth() {
+    const b = A.bluetooth;
+    const deviceRow = (d) => {
+      const isBusy = b.busy === d.mac;
+      const btn = (label, action, cls = 'btn small') => {
+        const el = h('button', { class: cls, disabled: !!b.busy, onclick: () => act(el, async () => {
+          if (action === 'forget' && !confirm(`Forget ${d.name}? You’ll need to pair it again to use it.`)) return null;
+          const r = await api('POST', `/api/audio/bluetooth/${d.mac}/${action}`);
+          toast({ pair: `Paired with ${d.name}`, connect: `Connected to ${d.name}`, disconnect: 'Disconnected', forget: 'Forgotten' }[action]);
+          return r;
+        }) }, label);
+        return el;
+      };
+      return h('div', { class: 'row' },
+        h('span', { class: 'ic-sm' }, icon(d.audio === false ? 'bluetooth' : 'speaker')),
+        h('div', { class: 'grow' },
+          h('div', { class: 'title' }, d.name),
+          h('div', { class: 'sub' }, isBusy ? 'Connecting…' : d.paired ? (d.connected ? 'Connected' : 'Not connected') : d.audio ? 'Speaker or headphones' : 'Other device')),
+        d.paired
+          ? h('div', { class: 'actions' }, d.connected ? btn('Disconnect', 'disconnect') : btn('Connect', 'connect', 'btn small primary'), btn('Forget', 'forget', 'btn small ghost'))
+          : btn('Pair', 'pair', 'btn small primary'));
+    };
+    const find = h('button', { class: 'btn small', disabled: scanning || b.scanning || !!b.busy, onclick: async () => {
+      scanning = true;
+      draw();
+      try {
+        const r = await api('POST', '/api/audio/bluetooth/scan');
+        A = r;
+        if (!r.bluetooth.nearby.length) toast('No speakers found. Is yours in pairing mode?', true);
+      } catch (err) { toast(err.message, true); }
+      scanning = false;
+      draw();
+    } }, scanning || b.scanning ? 'Looking…' : 'Find speakers');
+    return [
+      h('div', { class: 'group-h' }, h('h2', {}, 'Bluetooth'), find),
+      b.error ? h('div', { class: 'callout', style: { marginBottom: '12px' } }, b.error) : null,
+      h('div', { class: 'panel rows-list' },
+        b.devices.length ? b.devices.map(deviceRow) : h('div', { class: 'panel-pad small muted' }, 'No Bluetooth speakers yet. Put your speaker in pairing mode (usually by holding its Bluetooth button until it flashes), then tap Find speakers.'),
+        scanning || b.scanning ? h('div', { class: 'row small muted' }, h('span', { class: 'spinner' }), 'Looking for nearby speakers for about 12 seconds…') : null),
+      b.nearby.length && !(scanning || b.scanning) ? h('div', {},
+        h('div', { class: 'group-h', style: { marginTop: '16px' } }, h('h2', {}, 'Nearby')),
+        h('div', { class: 'panel rows-list' }, b.nearby.map(deviceRow))) : null,
+      h('p', { class: 'small muted', style: { margin: '10px 4px 0' } }, 'Panel reconnects your speaker automatically whenever it’s switched on.'),
+    ];
+  }
+
+  function airplay() {
+    const a = A.airplay;
+    const np = A.nowPlaying;
+    const hasWidget = B.widgets.some((w) => w.type === 'nowplaying');
+    const addWidget = h('button', { class: 'btn small', onclick: () => act(addWidget, async () => {
+      const w = await api('POST', '/api/widgets', { type: 'nowplaying' });
+      B.widgets.push(w);
+      toast('Now playing added to the screen');
+      draw();
+    }) }, icon('plus'), 'Show it on the screen');
+    return [
+      h('div', { class: 'group-h' }, h('h2', {}, 'AirPlay')),
+      h('div', { class: 'panel rows-list' },
+        h('div', { class: 'row', style: { display: 'block' } },
+          toggle('Play music here from iPhone, iPad and Mac', a.enabled, (v) => act(null, () => api('PUT', '/api/audio/airplay', { enabled: v }))),
+          h('div', { class: 'small muted', style: { marginTop: '2px' } }, a.enabled
+            ? (a.running ? `Ready. Shows up as “${a.name}”. Rename it in Settings.` : 'Starting…')
+            : 'Off. Nothing can play to this panel.')),
+        a.error ? h('div', { class: 'row error-text' }, a.error) : null,
+        np && np.state !== 'idle' && np.title ? h('div', { class: 'row' },
+          np.artUrl ? h('img', { src: np.artUrl, alt: '', class: 'np-thumb' }) : h('span', { class: 'ic-sm' }, icon('nowplaying')),
+          h('div', { class: 'grow' }, h('div', { class: 'title' }, np.title), h('div', { class: 'sub' }, [np.artist, np.source && `from ${np.source}`].filter(Boolean).join(' · '))),
+          h('span', { class: 'small muted' }, np.state === 'paused' ? 'Paused' : 'Playing')) : null,
+        a.enabled && !hasWidget ? h('div', { class: 'row' }, h('span', { class: 'grow small muted' }, 'Show the song, artist and album art on the panel'), addWidget) : null),
+      a.enabled ? h('div', { class: 'callout', style: { marginTop: '12px' } },
+        h('b', {}, 'How to play here. '),
+        `On iPhone, open Control Center, tap the AirPlay icon on the music card, and choose “${a.name}”. On a Mac, use the AirPlay button in Music or Control Center → Sound. Volume follows your phone. Sound comes out of the speaker selected above.`) : null,
+    ];
+  }
+
+  function draw() {
+    if (!wrap.isConnected && A) { audioListeners.delete(listener); return; }
+    if (!A) return;
+    if (!A.caps.sound && !A.caps.airplay && !A.caps.bluetooth) {
+      wrap.replaceChildren(h('div', { class: 'callout' }, h('b', {}, 'Sound controls work on the Raspberry Pi. '),
+        'This computer doesn’t have the Pi’s sound tools (PipeWire, BlueZ and shairport-sync). On a Pi, rerun the installer to set them up.'));
+      return;
+    }
+    wrap.replaceChildren(...[
+      ...(A.caps.sound ? speakers() : []),
+      ...(A.caps.bluetooth ? bluetooth() : []),
+      ...(A.caps.airplay ? airplay() : []),
+    ].filter(Boolean));
+  }
+
+  const listener = (a) => {
+    if (!wrap.isConnected) { audioListeners.delete(listener); return; }
+    // Don't redraw under the user's finger while they drag the volume slider.
+    if (document.activeElement?.type === 'range') return;
+    A = a;
+    draw();
+  };
+  audioListeners.add(listener);
+  api('GET', '/api/audio').then((a) => { A = a; draw(); }).catch((e) => wrap.replaceChildren(h('p', { class: 'error-text' }, e.message)));
+  return wrap;
 }
 
 // ---------------------------------------------------------------- settings
