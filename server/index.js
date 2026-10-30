@@ -1,0 +1,563 @@
+import http from 'node:http';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import QRCode from 'qrcode';
+
+import { Store, DATA_DIR, rid } from './store.js';
+import { createHub } from './events.js';
+import { createAuth, isLocal } from './auth.js';
+import { Scheduler } from './scheduler.js';
+import { types, catalog, defaultConfig, viewOf } from './widgets/index.js';
+import { buildPrompt } from './widgets/summary.js';
+import { SAMPLES } from './lib/views.js';
+import { HttpError, VERSION, fetchJson } from './lib/http.js';
+import { isValidTimeZone, tzParts } from './lib/time.js';
+import { complete, listModels } from './lib/openrouter.js';
+import { createUpdater } from './updater.js';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const WEB = path.join(ROOT, 'web');
+const PORT = +process.env.PORT || 8080;
+const HOST = process.env.HOST || '0.0.0.0';
+const BOOT_ID = rid(4);
+const MASK = '••••';
+
+const store = new Store();
+const hub = createHub();
+const auth = createAuth(store, () => broadcastState());
+const scheduler = new Scheduler(store, (id) => hub.send('widget', publicWidget(store.widget(id))));
+let displaySize = null;
+const updater = createUpdater({
+  root: ROOT,
+  onChange: (u) => hub.send('update', u),
+  autoUpdateEnabled: () => !!store.settings.autoUpdate,
+  // Install automatic updates between 3 and 6 AM, panel time.
+  isQuietHour: () => { const h = tzParts(new Date(), store.settings.timezone).h; return h >= 3 && h < 6; },
+});
+
+// ---------------------------------------------------------------- serializers
+
+function lanAddresses() {
+  const out = [];
+  for (const list of Object.values(os.networkInterfaces())) {
+    for (const a of list || []) if (a.family === 'IPv4' && !a.internal) out.push(a.address);
+  }
+  return out;
+}
+
+function system() {
+  const suffix = PORT === 80 ? '' : `:${PORT}`;
+  const hostname = os.hostname().split('.')[0];
+  const ips = lanAddresses();
+  return {
+    version: VERSION,
+    hostname,
+    ips,
+    port: PORT,
+    urls: {
+      name: `http://${hostname}.local${suffix}`,
+      ip: ips[0] ? `http://${ips[0]}${suffix}` : null,
+    },
+  };
+}
+
+function publicSettings() {
+  const s = store.settings;
+  return {
+    name: s.name, timezone: s.timezone, units: s.units, clock24: s.clock24,
+    theme: s.theme, nightStart: s.nightStart, nightEnd: s.nightEnd, grid: s.grid,
+    location: s.location ? { name: s.location.name } : null,
+    aiReady: !!s.ai.apiKey,
+  };
+}
+
+function publicWidget(w) {
+  if (!w) return null;
+  const def = types[w.type];
+  const st = store.state[w.id] || {};
+  return {
+    id: w.id, type: w.type, view: viewOf(w),
+    title: w.title, w: w.w, h: w.h,
+    props: def?.display?.(w.config || {}) ?? {},
+    data: st.data ?? null,
+    updatedAt: st.updatedAt ?? null,
+    error: st.error ?? null,
+  };
+}
+
+const masked = (v) => (v ? `${MASK}${String(v).slice(-4)}` : '');
+
+function adminWidget(w) {
+  const def = types[w.type];
+  const config = { ...w.config };
+  for (const f of def?.fields || []) if (f.secret && config[f.key]) config[f.key] = masked(config[f.key]);
+  return { ...publicWidget(w), config, token: def?.ingest ? w.token : undefined };
+}
+
+let qrCache = { text: '', svg: '' };
+async function qrSvg(text) {
+  if (qrCache.text !== text) {
+    qrCache = { text, svg: await QRCode.toString(text, { type: 'svg', margin: 0, errorCorrectionLevel: 'M', color: { dark: '#111111', light: '#0000' } }) };
+  }
+  return qrCache.svg;
+}
+
+async function snapshot() {
+  const sys = system();
+  const p = auth.pairing();
+  const base = sys.urls.ip || sys.urls.name;
+  return {
+    bootId: BOOT_ID,
+    setupComplete: store.config.setupComplete,
+    settings: publicSettings(),
+    widgets: store.config.widgets.map(publicWidget),
+    system: sys,
+    pairing: p ? {
+      code: p.code,
+      expires: Number.isFinite(p.expires) ? p.expires : null,
+      qr: await qrSvg(`${base}/?code=${p.code}`),
+    } : null,
+  };
+}
+
+async function broadcastState() {
+  hub.send('state', await snapshot());
+}
+
+// ---------------------------------------------------------------- http utils
+
+const SECURITY_HEADERS = {
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'no-referrer',
+};
+
+function send(res, status, body, headers = {}) {
+  const isJson = typeof body !== 'string' && !Buffer.isBuffer(body);
+  res.writeHead(status, {
+    ...SECURITY_HEADERS,
+    'Content-Type': isJson ? 'application/json; charset=utf-8' : 'text/plain; charset=utf-8',
+    'Cache-Control': 'no-store',
+    ...headers,
+  });
+  res.end(isJson ? JSON.stringify(body) : body);
+}
+
+async function readBody(req, limit = 1_000_000) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > limit) throw new HttpError(413, 'Request body too large');
+    chunks.push(chunk);
+  }
+  const raw = Buffer.concat(chunks).toString('utf8');
+  if (!raw.trim()) return {};
+  const type = req.headers['content-type'] || '';
+  const trimmed = raw.trim();
+  // Check for JSON first: `curl -d '{...}'` labels JSON as a form post.
+  if (type.includes('json') || /^[[{]/.test(trimmed)) {
+    try { return JSON.parse(trimmed); } catch { throw new HttpError(400, 'Body is not valid JSON'); }
+  }
+  if (/^-?\d[\d.,]*$/.test(trimmed)) return Number(trimmed.replace(/,/g, ''));
+  if (type.includes('application/x-www-form-urlencoded')) return Object.fromEntries(new URLSearchParams(raw));
+  return { text: trimmed };
+}
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json',
+  '.woff2': 'font/woff2', '.webmanifest': 'application/manifest+json',
+};
+
+function serveFile(res, file) {
+  const resolved = path.resolve(WEB, file);
+  if (!resolved.startsWith(WEB + path.sep)) return send(res, 404, 'Not found');
+  fs.readFile(resolved, (err, buf) => {
+    if (err) return send(res, 404, 'Not found');
+    res.writeHead(200, { ...SECURITY_HEADERS, 'Content-Type': MIME[path.extname(resolved)] || 'application/octet-stream', 'Cache-Control': 'no-cache' });
+    res.end(buf);
+  });
+}
+
+// ---------------------------------------------------------------- routing
+
+const routes = [];
+function route(method, pattern, handler, { open = false } = {}) {
+  const keys = [];
+  const re = new RegExp(`^${pattern.replace(/:(\w+)/g, (_, k) => { keys.push(k); return '([^/]+)'; })}$`);
+  routes.push({ method, re, keys, handler, open });
+}
+
+function findWidget(id) {
+  const w = store.widget(id);
+  if (!w) throw new HttpError(404, 'No such widget');
+  return w;
+}
+
+function clampSize(w, h) {
+  const { cols, rows } = store.settings.grid;
+  return {
+    w: Math.min(cols, Math.max(1, Math.round(+w) || 1)),
+    h: Math.min(rows, Math.max(1, Math.round(+h) || 1)),
+  };
+}
+
+function cleanConfig(type, incoming = {}, existing = {}) {
+  const def = types[type];
+  const out = { ...existing };
+  for (const f of def.fields) {
+    if (!(f.key in incoming) || f.type === 'tasks') continue;
+    let v = incoming[f.key];
+    if (f.secret && typeof v === 'string' && v.startsWith(MASK)) continue; // unchanged
+    if (f.type === 'toggle') v = !!v;
+    else if (f.type === 'number') v = v === '' || v == null ? null : Number(v);
+    else if (f.type === 'location') v = v && Number.isFinite(+v.lat) ? { name: String(v.name || '').slice(0, 80), lat: +v.lat, lon: +v.lon } : null;
+    else if (v != null) v = String(v).slice(0, 4000);
+    out[f.key] = v;
+  }
+  return out;
+}
+
+function changed() {
+  store.saveConfig();
+  broadcastState();
+}
+
+// Public
+
+route('GET', '/api/status', (req) => ({
+  name: store.settings.name,
+  authed: auth.authed(req),
+  setupComplete: store.config.setupComplete,
+  version: VERSION,
+  bootId: BOOT_ID,
+}), { open: true });
+
+route('POST', '/api/pair/request', (req) => {
+  const p = auth.request();
+  // The CLI on the Pi itself is allowed to read the code (`panel pair`).
+  return isLocal(req) ? { ok: true, code: p.code } : { ok: true };
+}, { open: true });
+
+route('POST', '/api/pair/confirm', async (req, res) => {
+  const body = await readBody(req, 10_000);
+  const r = auth.confirm(body.code, req);
+  if (r.error) {
+    const messages = {
+      invalid: 'That code didn’t match. Check the screen and try again.',
+      expired: 'That code expired. We’ve put a fresh one on the screen.',
+      'too-many': 'Too many tries. There’s a new code on the screen.',
+    };
+    if (r.error === 'expired') auth.request();
+    throw new HttpError(400, messages[r.error]);
+  }
+  send(res, 200, { ok: true }, { 'Set-Cookie': auth.cookie(r.token) });
+}, { open: true });
+
+route('POST', '/api/pair/dismiss', () => {
+  auth.dismiss();
+  return { ok: true };
+});
+
+route('POST', '/api/logout', (req, res) => {
+  const s = auth.session(req);
+  if (s) {
+    store.config.sessions = store.config.sessions.filter((x) => x !== s);
+    store.saveConfig();
+  }
+  send(res, 200, { ok: true }, { 'Set-Cookie': auth.cookie('', 0) });
+}, { open: true });
+
+// Webhooks authenticate with the widget's own token instead of a session.
+route('POST', '/hook/:id', async (req, res, { id }, url) => {
+  const w = store.widget(id);
+  const def = w && types[w.type];
+  const given = (req.headers.authorization || '').replace(/^Bearer\s+/i, '') || req.headers['x-panel-token'] || url.searchParams.get('token') || '';
+  const ok = w && given.length === w.token.length && crypto.timingSafeEqual(Buffer.from(given), Buffer.from(w.token));
+  if (!ok) throw new HttpError(404, 'Unknown webhook or wrong token');
+  if (!def.ingest) throw new HttpError(400, `${def.name} widgets don't accept webhooks`);
+  const body = await readBody(req);
+  const data = def.ingest(body, store.state[id]?.data, w.config || {});
+  store.setData(id, { data, updatedAt: new Date().toISOString(), error: null });
+  hub.send('widget', publicWidget(w));
+  return { ok: true };
+}, { open: true });
+
+// Display
+
+route('GET', '/api/display/state', () => snapshot());
+
+route('GET', '/api/stream', async (req, res) => {
+  hub.attach(req, res, await snapshot());
+});
+
+route('POST', '/api/display/hello', async (req) => {
+  const { width, height } = await readBody(req, 1000);
+  if (isLocal(req) && width > 0 && height > 0) displaySize = { width: +width, height: +height };
+  return { ok: true };
+});
+
+// Manage
+
+route('GET', '/api/admin/bootstrap', (req) => {
+  const me = auth.session(req);
+  const s = store.settings;
+  return {
+    setupComplete: store.config.setupComplete,
+    settings: { ...publicSettings(), location: s.location, autoUpdate: !!s.autoUpdate, ai: { apiKey: masked(s.ai.apiKey), model: s.ai.model } },
+    widgets: store.config.widgets.map(adminWidget),
+    catalog: catalog(),
+    samples: SAMPLES,
+    sessions: store.config.sessions.map((x) => ({ id: x.id, name: x.name, createdAt: x.createdAt, lastSeen: x.lastSeen, current: x === me })),
+    system: { ...system(), displaySize, dataDir: DATA_DIR, managed: !!process.env.INVOCATION_ID, local: isLocal(req) },
+    update: updater.state,
+  };
+});
+
+route('PUT', '/api/settings', async (req) => {
+  const b = await readBody(req);
+  const s = store.settings;
+  let refetch = false;
+  if (b.name !== undefined) s.name = String(b.name).trim().slice(0, 40) || 'Panel';
+  if (b.timezone !== undefined) {
+    if (!isValidTimeZone(b.timezone)) throw new HttpError(400, 'Unknown time zone');
+    refetch ||= s.timezone !== b.timezone;
+    s.timezone = b.timezone;
+  }
+  if (b.units !== undefined) { refetch ||= s.units !== b.units; s.units = b.units === 'imperial' ? 'imperial' : 'metric'; }
+  if (b.clock24 !== undefined) s.clock24 = !!b.clock24;
+  if (b.autoUpdate !== undefined) s.autoUpdate = !!b.autoUpdate;
+  if (b.theme !== undefined && ['light', 'dark', 'auto'].includes(b.theme)) s.theme = b.theme;
+  for (const k of ['nightStart', 'nightEnd']) if (/^\d{2}:\d{2}$/.test(b[k] || '')) s[k] = b[k];
+  if (b.location !== undefined) {
+    s.location = b.location && Number.isFinite(+b.location.lat)
+      ? { name: String(b.location.name || '').slice(0, 80), lat: +b.location.lat, lon: +b.location.lon }
+      : null;
+    refetch = true;
+  }
+  if (b.grid) {
+    s.grid = {
+      cols: Math.min(6, Math.max(1, +b.grid.cols || s.grid.cols)),
+      rows: Math.min(4, Math.max(1, +b.grid.rows || s.grid.rows)),
+    };
+    for (const w of store.config.widgets) Object.assign(w, clampSize(w.w, w.h));
+  }
+  if (b.ai) {
+    if (typeof b.ai.apiKey === 'string' && !b.ai.apiKey.startsWith(MASK)) { s.ai.apiKey = b.ai.apiKey.trim(); refetch = true; }
+    if (typeof b.ai.model === 'string' && b.ai.model.trim()) { refetch ||= s.ai.model !== b.ai.model.trim(); s.ai.model = b.ai.model.trim(); }
+  }
+  if (refetch) scheduler.invalidateAll();
+  changed();
+  return { ok: true };
+});
+
+route('POST', '/api/setup/complete', () => {
+  store.config.setupComplete = true;
+  changed();
+  return { ok: true };
+});
+
+route('POST', '/api/widgets', async (req) => {
+  const b = await readBody(req);
+  const def = types[b.type];
+  if (!def) throw new HttpError(400, 'Unknown widget type');
+  const size = clampSize(b.w ?? def.size.w, b.h ?? def.size.h);
+  const w = {
+    id: rid(6),
+    type: def.type,
+    title: String(b.title || def.defaultTitle || def.name).slice(0, 60),
+    ...size,
+    config: cleanConfig(def.type, b.config, defaultConfig(def.type)),
+    token: rid(18),
+  };
+  store.config.widgets.push(w);
+  if (b.data && def.ingest) store.setData(w.id, { data: def.ingest(b.data, null, w.config), updatedAt: new Date().toISOString() });
+  changed();
+  scheduler.run(w);
+  return adminWidget(w);
+});
+
+route('PUT', '/api/widgets/order', async (req) => {
+  const { ids } = await readBody(req);
+  if (!Array.isArray(ids)) throw new HttpError(400, 'Expected ids');
+  const rank = new Map(ids.map((id, i) => [id, i]));
+  store.config.widgets.sort((a, b) => (rank.get(a.id) ?? 1e9) - (rank.get(b.id) ?? 1e9));
+  changed();
+  return { ok: true };
+});
+
+route('PUT', '/api/widgets/:id', async (req, res, { id }) => {
+  const w = findWidget(id);
+  const b = await readBody(req);
+  if (b.title !== undefined) w.title = String(b.title).trim().slice(0, 60) || types[w.type].name;
+  if (b.w !== undefined || b.h !== undefined) Object.assign(w, clampSize(b.w ?? w.w, b.h ?? w.h));
+  if (b.config) {
+    const before = JSON.stringify(w.config);
+    w.config = cleanConfig(w.type, b.config, w.config);
+    if (before !== JSON.stringify(w.config)) {
+      // A different view makes old pushed data meaningless.
+      if (JSON.parse(before).view !== w.config.view && types[w.type].ingest) delete store.state[id];
+      scheduler.invalidate(id);
+      scheduler.run(w);
+    }
+  }
+  changed();
+  return adminWidget(w);
+});
+
+route('DELETE', '/api/widgets/:id', (req, res, { id }) => {
+  findWidget(id);
+  store.config.widgets = store.config.widgets.filter((w) => w.id !== id);
+  delete store.state[id];
+  store.saveState();
+  changed();
+  return { ok: true };
+});
+
+route('POST', '/api/widgets/:id/refresh', async (req, res, { id }) => {
+  const w = findWidget(id);
+  await scheduler.run(w);
+  return adminWidget(w);
+});
+
+route('POST', '/api/widgets/:id/action', async (req, res, { id }) => {
+  const w = findWidget(id);
+  const def = types[w.type];
+  if (!def.ingest) throw new HttpError(400, 'This widget doesn’t take actions');
+  const body = await readBody(req);
+  const data = def.ingest(body, store.state[id]?.data, w.config || {});
+  store.setData(id, { data, updatedAt: new Date().toISOString(), error: null });
+  hub.send('widget', publicWidget(w));
+  return adminWidget(w);
+});
+
+route('POST', '/api/widgets/:id/token', (req, res, { id }) => {
+  const w = findWidget(id);
+  w.token = rid(18);
+  store.saveConfig();
+  return adminWidget(w);
+});
+
+route('GET', '/api/widgets/:id/context', (req, res, { id }) => {
+  const w = findWidget(id);
+  const ctx = scheduler.context(w);
+  const { system: sys, user } = buildPrompt(w.config || {}, ctx, scheduler.gatherContext(id));
+  return { system: sys, user };
+});
+
+route('DELETE', '/api/sessions/:id', (req, res, { id }) => {
+  store.config.sessions = store.config.sessions.filter((s) => s.id !== id);
+  store.saveConfig();
+  return { ok: true };
+});
+
+route('GET', '/api/geocode', async (req, res, params, url) => {
+  const q = (url.searchParams.get('q') || '').trim();
+  if (q.length < 2) return [];
+  const d = await fetchJson(`https://geocoding-api.open-meteo.com/v1/search?${new URLSearchParams({ name: q, count: '8', language: 'en', format: 'json' })}`);
+  return (d.results || []).map((r) => ({
+    name: r.name,
+    detail: [r.admin1, r.country].filter(Boolean).join(', '),
+    lat: r.latitude, lon: r.longitude, timezone: r.timezone,
+  }));
+});
+
+route('GET', '/api/ai/models', () => listModels());
+
+route('POST', '/api/ai/test', async (req) => {
+  const b = await readBody(req);
+  const apiKey = typeof b.apiKey === 'string' && b.apiKey && !b.apiKey.startsWith(MASK) ? b.apiKey.trim() : store.settings.ai.apiKey;
+  if (!apiKey) throw new HttpError(400, 'Paste an OpenRouter key first');
+  const out = await complete({
+    apiKey, model: b.model || store.settings.ai.model, maxTokens: 20,
+    messages: [{ role: 'user', content: 'Reply with the single word: ready' }],
+  }).catch((err) => { throw new HttpError(400, err.message); });
+  return { ok: true, reply: out.text, model: out.model };
+});
+
+route('POST', '/api/display/reload', () => {
+  hub.send('reload');
+  return { ok: true };
+});
+
+// System
+
+route('GET', '/api/system/update', () => updater.state);
+
+route('POST', '/api/system/check-update', () => updater.check());
+
+route('POST', '/api/system/update', async () => {
+  // Resolves once the pre-flight checks pass; progress then arrives over the event stream.
+  try {
+    return await updater.apply();
+  } catch (err) {
+    throw new HttpError(409, err.message);
+  }
+});
+
+route('POST', '/api/system/restart', () => {
+  if (!process.env.INVOCATION_ID) throw new HttpError(400, 'Panel isn’t running as a service, so it can’t restart itself.');
+  setTimeout(() => process.exit(0), 300);
+  return { ok: true };
+});
+
+// ---------------------------------------------------------------- server
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, 'http://panel');
+  const p = url.pathname;
+
+  // CORS so webhooks can come from browser-based tools too.
+  if (p.startsWith('/hook/')) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Panel-Token');
+    if (req.method === 'OPTIONS') return send(res, 204, '');
+  }
+
+  try {
+    if (req.method === 'GET' && !p.startsWith('/api/')) {
+      if (p === '/display') return serveFile(res, 'display.html');
+      if (p === '/' || p === '/manage') return serveFile(res, 'manage.html');
+      if (p.startsWith('/assets/')) return serveFile(res, p.slice(1));
+      if (p === '/favicon.svg' || p === '/favicon.ico') return serveFile(res, 'assets/favicon.svg');
+      if (p === '/health') return send(res, 200, 'ok');
+    }
+
+    for (const r of routes) {
+      if (r.method !== req.method) continue;
+      const m = r.re.exec(p);
+      if (!m) continue;
+      if (!r.open && !auth.authed(req)) throw new HttpError(401, 'Pair this device first');
+      const params = Object.fromEntries(r.keys.map((k, i) => [k, decodeURIComponent(m[i + 1])]));
+      const out = await r.handler(req, res, params, url);
+      if (!res.headersSent && out !== undefined) send(res, 200, out);
+      return;
+    }
+    send(res, 404, { error: 'Not found' });
+  } catch (err) {
+    const status = err.status || 500;
+    if (status >= 500) console.error(err);
+    if (!res.headersSent) send(res, status, { error: err.message || 'Something went wrong' });
+  }
+});
+
+server.listen(PORT, HOST, () => {
+  const sys = system();
+  console.log(`Panel ${VERSION} is running.`);
+  console.log(`  Display  http://localhost:${PORT}/display`);
+  console.log(`  Manage   ${sys.urls.name}${sys.urls.ip ? `  or  ${sys.urls.ip}` : ''}`);
+  console.log(`  Data     ${DATA_DIR}`);
+  scheduler.start();
+  updater.start();
+});
+
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, () => {
+    store.flush();
+    process.exit(0);
+  });
+}
+process.on('exit', () => store.flush());

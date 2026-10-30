@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# The `panel` command: everyday management from the Pi's terminal.
+set -euo pipefail
+
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+DIR="$(cd "$(dirname "$SELF")/.." && pwd)"
+DATA="${PANEL_DATA:-$HOME/.panel}"
+# shellcheck disable=SC1090
+[ -f "$DATA/panel.env" ] && . "$DATA/panel.env"
+PORT="${PORT:-80}"
+BASE="http://localhost:$PORT"
+
+bold=$'\e[1m'; dim=$'\e[2m'; green=$'\e[32m'; red=$'\e[31m'; reset=$'\e[0m'
+
+urls() {
+  local suffix=""; [ "$PORT" != "80" ] && suffix=":$PORT"
+  echo "  http://$(hostname).local$suffix"
+  for ip in $(hostname -I 2>/dev/null); do
+    case "$ip" in *:*) ;; *) echo "  http://$ip$suffix" ;; esac
+  done
+}
+
+case "${1:-help}" in
+  status)
+    if curl -fs "$BASE/health" >/dev/null 2>&1; then
+      echo "${green}●${reset} Panel is running ($(curl -fs "$BASE/api/status" | sed -E 's/.*"version":"([^"]+)".*/v\1/'))"
+    else
+      echo "${red}●${reset} Panel isn't responding on port $PORT"
+    fi
+    systemctl is-active --quiet panel-kiosk 2>/dev/null && echo "  Display: running (kiosk service)"
+    echo "  Manage it from:"; urls
+    ;;
+  url|urls)
+    urls
+    ;;
+  logs)
+    exec journalctl -u panel -f -n 100 --output cat
+    ;;
+  restart)
+    sudo systemctl restart panel && echo "Restarted."
+    ;;
+  reload)
+    curl -fs -X POST "$BASE/api/display/reload" >/dev/null && echo "Told the screen to reload."
+    ;;
+  pair)
+    code="$(curl -fs -X POST "$BASE/api/pair/request" | sed -E 's/.*"code":"([0-9]+)".*/\1/')"
+    [ -n "$code" ] || { echo "Couldn't get a code. Is Panel running? (panel status)"; exit 1; }
+    echo
+    echo "  Pairing code: ${bold}${code:0:3} ${code:3}${reset}  ${dim}(valid for 5 minutes)${reset}"
+    echo
+    echo "  Open one of these on your phone or laptop and enter it:"
+    urls
+    echo
+    ;;
+  update)
+    git -C "$DIR" fetch --quiet origin
+    behind="$(git -C "$DIR" rev-list --count 'HEAD..@{u}')"
+    if [ "$behind" = "0" ]; then
+      echo "${green}✓${reset} Panel is up to date ($(node -p "require('$DIR/package.json').version"))."
+      exit 0
+    fi
+    echo "${bold}What's new${reset}"
+    git -C "$DIR" log --no-merges --format='  • %s' -n 20 'HEAD..@{u}'
+    echo
+    before="$(git -C "$DIR" rev-parse HEAD)"
+    if git -C "$DIR" merge --ff-only --quiet '@{u}' && (cd "$DIR" && npm ci --omit=dev --no-audit --no-fund --loglevel=error); then
+      sudo systemctl restart panel
+      echo "${green}✓${reset} Updated to $(node -p "require('$DIR/package.json').version")"
+    else
+      echo "${red}✗${reset} Update failed. Rolling back."
+      git -C "$DIR" reset --hard --quiet "$before"
+      (cd "$DIR" && npm ci --omit=dev --no-audit --no-fund --loglevel=error)
+      exit 1
+    fi
+    ;;
+  reset)
+    read -r -p "Erase all widgets, settings and paired devices? [y/N] " ok
+    case "$ok" in
+      [Yy]*)
+        sudo systemctl stop panel
+        rm -f "$DATA/config.json" "$DATA/state.json"
+        sudo systemctl start panel
+        echo "Reset. The screen will show setup again."
+        ;;
+      *) echo "Nothing changed." ;;
+    esac
+    ;;
+  uninstall)
+    read -r -p "Remove Panel from this device? [y/N] " ok
+    case "$ok" in [Yy]*) ;; *) echo "Nothing changed."; exit 0 ;; esac
+    sudo systemctl disable --now panel panel-kiosk 2>/dev/null || true
+    sudo rm -f /etc/systemd/system/panel.service /etc/systemd/system/panel-kiosk.service /usr/local/bin/panel
+    sudo systemctl daemon-reload
+    sed -i "\#$DIR/bin/kiosk.sh#d" "$HOME/.config/labwc/autostart" "$HOME/.config/wayfire.ini" "$HOME/.config/lxsession/LXDE-pi/autostart" 2>/dev/null || true
+    echo "Removed the service and autostart entries."
+    echo "Your data is still in $DATA and the code in $DIR. Delete them with:"
+    echo "  rm -rf \"$DATA\" \"$DIR\""
+    ;;
+  help|-h|--help|*)
+    cat <<EOF
+${bold}panel${reset}: manage your Panel
+
+  panel status      Is it running, and where to manage it
+  panel pair        Show a code to connect a phone or laptop
+  panel logs        Follow the server log
+  panel reload      Reload what's on the screen
+  panel restart     Restart the server
+  panel update      Install the latest version (also in Settings on the web)
+  panel reset       Start over (erases widgets and settings)
+  panel uninstall   Remove the service and autostart
+EOF
+    ;;
+esac
